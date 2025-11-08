@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title or "Casharr WebUI" }}</title>
+
+  <!-- Favicons -->
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('webui.static', filename='assets/apple-touch-icon.png') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('webui.static', filename='assets/favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('webui.static', filename='assets/favicon-16x16.png') }}">
+  <link rel="manifest" href="{{ url_for('webui.static', filename='assets/site.webmanifest') }}">
+  <link rel="shortcut icon" href="{{ url_for('webui.static', filename='assets/favicon.ico') }}">
+  <meta name="theme-color" content="#00c896">
+
+  <!-- Meta -->
+  <meta name="description" content="Casharr — Automated Discord & Plex Subscription Manager.">
+  <meta name="author" content="Aquilla Computing System">
+
+  <!-- Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="{{ url_for('webui.static', filename='style.css') }}" />
+</head>
+<body class="theme-light">
+  {% if system_health and not system_health.ok %}
+<div style="background:#ffcc00;color:#000;padding:8px;text-align:center;font-weight:600;">
+  ⚠️ System Warning: {{ system_health.message }}
+</div>
+{% endif %}
+
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar__brand">
+        <img src="{{ url_for('webui.static', filename='assets/casharr-logo.svg') }}" alt="Casharr Logo" class="brand__logo-img">
+        <div class="brand__text">
+          <div class="brand__title">Casharr</div>
+          <div class="brand__subtitle">Subscriptions</div>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="sidebar__nav">
+        <a href="/dashboard">
+          <i data-lucide="home" class="nav__icon"></i>
+          <span>Dashboard</span>
+        </a>
+        <a href="/members">
+          <i data-lucide="users" class="nav__icon"></i>
+          <span>Members</span>
+        </a>
+        <a href="/reports">
+          <i data-lucide="file-text" class="nav__icon"></i>
+          <span>Reports</span>
+        </a>
+
+        <!-- Configuration collapsible section -->
+        <div class="nav__section">
+          <button class="nav__collapse" id="configToggle">
+            <div class="collapse__left">
+              <i data-lucide="settings" class="nav__icon"></i>
+              <span>Configuration</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapse__arrow"></i>
+          </button>
+
+          <div class="nav__submenu" id="configMenu">
+            <a href="/config/discord">
+              <i data-lucide="message-circle" class="nav__subicon"></i>
+              <span>Discord</span>
+            </a>
+            <a href="/config/reminders">
+              <i data-lucide="clock" class="nav__subicon"></i>
+              <span>Reminders</span>
+            </a>
+            <a href="/config/payments">
+              <i data-lucide="credit-card" class="nav__subicon"></i>
+              <span>Payments</span>
+            </a>
+            <a href="/config/plex">
+              <i data-lucide="monitor" class="nav__subicon"></i>
+              <span>Plex</span>
+            </a>
+            <a href="/config/settings">
+              <i data-lucide="lock" class="nav__subicon"></i>
+              <span>Settings</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- System collapsible section -->
+        <div class="nav__section">
+          <button class="nav__collapse" id="systemToggle">
+            <div class="collapse__left">
+              <i data-lucide="monitor-cog" class="nav__icon"></i>
+              <span>System</span>
+            </div>
+            <i data-lucide="chevron-down" class="collapse__arrow"></i>
+          </button>
+
+          <div class="nav__submenu" id="systemMenu">
+            <a href="/system/status">
+              <i data-lucide="activity" class="nav__subicon"></i>
+              <span>Status</span>
+            </a>
+            <a href="/system/tasks">
+              <i data-lucide="clock" class="nav__subicon"></i>
+              <span>Tasks</span>
+            </a>
+            <a href="/system/backup">
+              <i data-lucide="database" class="nav__subicon"></i>
+              <span>Backup</span>
+            </a>
+            <a href="/system/updates">
+              <i data-lucide="download-cloud" class="nav__subicon"></i>
+              <span>Updates</span>
+            </a>
+            <a href="/system/events">
+              <i data-lucide="bell" class="nav__subicon"></i>
+              <span>Events</span>
+            </a>
+            <a href="/system/logs">
+              <i data-lucide="file" class="nav__subicon"></i>
+              <span>Log Files</span>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Sidebar footer with theme toggle -->
+      <div class="sidebar__footer">
+        <button id="themeToggle" class="toggle">
+          <span class="toggle__icon">🌓</span>
+          <span class="toggle__label">Theme: <strong id="themeLabel">Light</strong></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="content">
+      <!-- ARR 60px top bar -->
+      <header class="topbar">
+        <div class="topbar__left">
+          <div class="breadcrumbs">
+            <span class="crumb">{{ title or "Dashboard" }}</span>
+            <span class="sep">|</span>
+            <span class="crumb">Casharr</span>
+          </div>
+        </div>
+        <div class="topbar__right">
+          <input type="text" class="search" placeholder="Search..." disabled>
+        </div>
+      </header>
+
+      <div class="content-inner">
+        {% block content %}{% endblock %}
+        <footer class="footer">
+          <p>© {{ 2025 }} Casharr — Automated Subscription Manager</p>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+
+      const currentPath = window.location.pathname;
+      document.querySelectorAll(".sidebar__nav a").forEach(link => {
+        if (link.getAttribute("href") === currentPath) {
+          link.classList.add("is-active");
+        } else {
+          link.classList.remove("is-active");
+        }
+      });
+
+      // Collapsible sections (System + Config)
+      const setupCollapse = (toggleId, menuId) => {
+        const toggle = document.getElementById(toggleId);
+        const menu = document.getElementById(menuId);
+        toggle.addEventListener("click", () => {
+          menu.classList.toggle("open");
+          toggle.classList.toggle("active");
+          lucide.createIcons();
+        });
+      };
+      setupCollapse("systemToggle", "systemMenu");
+      setupCollapse("configToggle", "configMenu");
+    });
+  </script>
+
+  <!-- Theme toggle -->
+  <script src="{{ url_for('webui.static', filename='theme-toggle.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="dashboard">
+  <h2>📊 Dashboard Overview</h2>
+  <p class="desc">Live overview of members and subscriptions across your Casharr system.</p>
+
+<div class="cards">
+  <!-- ─────────── Member Statistics ─────────── -->
+  <div class="card"><h3>Total Members</h3><span class="value">{{ stats.total }}</span></div>
+  <div class="card"><h3>Active Trials</h3><span class="value">{{ stats.active_trials }}</span></div>
+  <div class="card"><h3>Active Payers</h3><span class="value">{{ stats.active_payers }}</span></div>
+  <div class="card"><h3>Expired</h3><span class="value">{{ stats.expired }}</span></div>
+
+  <!-- ─────────── System Configuration ─────────── -->
+  <div class="card"><h3>Trial Settings</h3>
+    {% if trial_days %}
+      <span class="value">{{ trial_days }} days</span>
+    {% else %}
+      <span class="value" style="color:var(--red)">Not set</span>
+    {% endif %}
+  </div>
+
+  <div class="card"><h3>Referrals</h3>
+    {% if referral_enabled %}
+      <span class="value" style="color:var(--green)">Enabled</span>
+      <p class="small-text">Configured via <code>[Referral]</code> in config.ini</p>
+    {% else %}
+      <span class="value" style="color:var(--red)">Disabled</span>
+    {% endif %}
+  </div>
+
+  <div class="card"><h3>Promotions</h3>
+    {% if promo_enabled %}
+      <span class="value" style="color:var(--green)">Enabled</span>
+      {% if promo_note %}<p class="small-text">{{ promo_note }}</p>{% endif %}
+    {% else %}
+      <span class="value" style="color:var(--red)">Disabled</span>
+    {% endif %}
+  </div>
+
+  <div class="card"><h3>Reminders</h3>
+    {% if reminders_enabled %}
+      <span class="value" style="color:var(--green)">Enabled</span>
+      <p class="small-text">{{ reminder_days }} days before expiry</p>
+    {% else %}
+      <span class="value" style="color:var(--red)">Disabled</span>
+    {% endif %}
+  </div>
+
+  <div class="card"><h3>Access Mode</h3>
+    {% if access_mode.lower() == "auto" %}
+      <span class="value" style="color:var(--green)">Auto</span>
+      <p class="small-text">Automatic member syncing</p>
+    {% else %}
+      <span class="value" style="color:var(--yellow)">Manual</span>
+      <p class="small-text">Admin approval required</p>
+    {% endif %}
+  </div>
+
+  <!-- ─────────── Service Connectivity ─────────── -->
+  <div class="card">
+    <h3>Discord Bot</h3>
+    <span class="value" id="discordStatus">–</span>
+    <p class="small-text" id="discordDesc">Checking…</p>
+  </div>
+
+  <div class="card">
+    <h3>Plex Connection</h3>
+    <span class="value" id="plexStatus">–</span>
+    <p class="small-text" id="plexDesc">Checking…</p>
+  </div>
+</div> <!-- ✅ keep this closing tag here, after both service cards -->
+
+<script>
+(async function(){
+  // Load member stats
+  try {
+    const res = await fetch("/api/connection_status");
+    const stats = await statsRes.json();
+    const vals = document.querySelectorAll(".cards .value");
+    if (vals.length >= 4) {
+      vals[0].textContent = stats.total ?? "–";
+      vals[1].textContent = stats.active_trials ?? "–";
+      vals[2].textContent = stats.active_payers ?? "–";
+      vals[3].textContent = stats.expired ?? "–";
+    }
+  } catch(e) {
+    console.error("Stats load failed:", e);
+  }
+
+  // Load connection status
+  async function updateConnections() {
+    try {
+      const res = await fetch("/api/connection_status");
+
+      const data = await res.json();
+
+      const discordBox = document.getElementById("discordStatus");
+      const plexBox = document.getElementById("plexStatus");
+      const discordDesc = document.getElementById("discordDesc");
+      const plexDesc = document.getElementById("plexDesc");
+
+      if (data.discord_online) {
+        discordBox.textContent = "Online";
+        discordBox.className = "value status-online";
+        discordDesc.textContent = "Bot connected to Discord.";
+      } else {
+        discordBox.textContent = "Offline";
+        discordBox.className = "value status-offline";
+        discordDesc.textContent = "Bot not responding.";
+      }
+
+      if (data.plex_connected) {
+        plexBox.textContent = "Connected";
+        plexBox.className = "value status-online";
+        plexDesc.textContent = "Plex API reachable.";
+      } else {
+        plexBox.textContent = "Unavailable";
+        plexBox.className = "value status-offline";
+        plexDesc.textContent = "No Plex connection.";
+      }
+    } catch (err) {
+      console.error("Connection check failed:", err);
+    }
+  }
+
+  updateConnections();
+  setInterval(updateConnections, 15000);
+})();
+</script>
+
+{% endblock %}

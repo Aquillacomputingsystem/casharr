@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="system-events">
+  <h2>🔔 System Events</h2>
+  <p class="desc">Recent activity across Discord, PayPal, and Plex automation.</p>
+
+  <div id="eventList" class="event-log">
+    <p>Loading events...</p>
+  </div>
+</section>
+
+<script>
+async function loadEvents() {
+  const container = document.getElementById("eventList");
+  try {
+    const res = await fetch("/api/events");
+    const data = await res.json();
+    if (!data.events || !data.events.length) {
+      container.innerHTML = "<p>No events found.</p>";
+      return;
+    }
+    container.innerHTML = "";
+    data.events.forEach((e) => {
+      const div = document.createElement("div");
+      div.className = "event-item";
+      div.innerHTML = `
+        <span class="event-time">${e.time}</span>
+        <span class="event-msg">${e.message}</span>
+      `;
+      container.appendChild(div);
+    });
+  } catch (err) {
+    container.innerHTML = `<p>⚠️ Failed to load events.</p>`;
+  }
+}
+
+loadEvents();
+setInterval(loadEvents, 15000); // auto-refresh every 15s
+</script>
+
+<style>
+.event-log {
+  margin-top: 1rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  font-family: monospace;
+  font-size: 13px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.event-item {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.event-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 150px;
+}
+.event-msg {
+  flex: 1;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+</style>
+{% endblock %}

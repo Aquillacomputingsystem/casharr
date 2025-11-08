@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <!-- Transparent background -->
+  <defs>
+    <!-- Mask to cut four diagonal separators out of the ring -->
+    <mask id="separators-mask">
+      <!-- Start with white (visible) -->
+      <rect x="0" y="0" width="512" height="512" fill="white"/>
+      <!-- Four diagonal cutouts (black = masked out / transparent) -->
+      <rect x="232" y="-30" width="48" height="580" rx="0" ry="0" transform="rotate(45 256 256)" fill="black"/>
+      <rect x="232" y="-30" width="48" height="580" rx="0" ry="0" transform="rotate(135 256 256)" fill="black"/>
+      <rect x="232" y="-30" width="48" height="580" rx="0" ry="0" transform="rotate(-45 256 256)" fill="black"/>
+      <rect x="232" y="-30" width="48" height="580" rx="0" ry="0" transform="rotate(-135 256 256)" fill="black"/>
+    </mask>
+  </defs>
+
+  <!-- Outer black ring outline -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#0F1113" stroke-width="18"/>
+
+  <!-- Green ring (as stroked circle) with separators masked out -->
+  <g mask="url(#separators-mask)">
+    <circle cx="256" cy="256" r="200" fill="none" stroke="#2F8F3A" stroke-width="120" stroke-linecap="butt"/>
+  </g>
+
+  <!-- White inner outline (thin) to mimic the white gap between ring and center -->
+  <circle cx="256" cy="256" r="110" fill="none" stroke="white" stroke-width="12"/>
+
+  <!-- Black center donut (solid circle with transparent center ring inside) -->
+  <!-- Outer black center -->
+  <circle cx="256" cy="256" r="90" fill="#0F1113" />
+  <!-- small inner green circle -->
+  <circle cx="256" cy="256" r="36" fill="#2F8F3A" />
+
+  <!-- Fine black ring outline around entire emblem (subtle) -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#0F1113" stroke-width="4" opacity="0.9"/>
+</svg>

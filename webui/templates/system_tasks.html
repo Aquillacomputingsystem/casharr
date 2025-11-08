@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="tasks">
+  <h2>System: Scheduled Tasks</h2>
+  <p>These are all automated or recurring background operations handled by Casharr.<br>
+  Use the ▶ button to run **Maintenance** or **Manual Backup** immediately.</p>
+
+  <div class="card">
+    <table class="task-table" id="taskTable">
+      <thead>
+        <tr>
+          <th>Task Name</th>
+          <th>Interval</th>
+          <th>Last Execution</th>
+          <th>Last Duration</th>
+          <th>Next Execution</th>
+          <th style="text-align:center; width:60px;">Run</th>
+        </tr>
+      </thead>
+      <tbody id="taskRows">
+        <tr><td colspan="6" style="text-align:center;">Loading tasks…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<style>
+.tasks h2 { margin-bottom: .5rem; }
+.task-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 14px; }
+.task-table th, .task-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+.task-table th { background: var(--bg-elev); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 13px; }
+.task-table tr:hover td { background: var(--bg-elev); }
+.run-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; cursor: pointer; font-size: 15px; transition: background .2s ease;
+}
+.run-btn:hover { background: var(--sb-bg-hover); }
+.run-btn:disabled { opacity: .6; cursor: not-allowed; }
+</style>
+
+<script>
+async function fetchTasks() {
+  try {
+    const res = await fetch('/api/tasks');
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'API error');
+    renderRows(data.tasks || []);
+  } catch (err) {
+    console.error('Error fetching tasks:', err);
+    document.getElementById('taskRows').innerHTML =
+      `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">⚠️ Failed to load tasks.</td></tr>`;
+  }
+}
+
+function fmt(val) {
+  if (!val) return '—';
+  try {
+    const d = new Date(val);
+    if (!isNaN(d)) return d.toLocaleString();
+  } catch {}
+  return val;
+}
+
+function renderRows(tasks) {
+  if (!tasks.length) {
+    document.getElementById('taskRows').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;">No tasks registered.</td></tr>';
+    return;
+  }
+
+  const rows = tasks.map(t => {
+    const running = t.running ? ' (running…)': '';
+    const runnable = /maintenance|backup/i.test(t.name);
+    return `
+      <tr>
+        <td><strong>${t.name}</strong>${running}</td>
+        <td>${t.interval || '—'}</td>
+        <td>${fmt(t.last_execution)}</td>
+        <td>${t.last_duration || '—'}</td>
+        <td>${fmt(t.next_execution)}</td>
+        <td style="text-align:center;">
+          <button class="run-btn" title="Run now" onclick="runTask('${t.name.replace(/'/g, "\\'")}')" ${runnable ? '' : 'disabled'}>▶</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('taskRows').innerHTML = rows;
+}
+
+async function runTask(name) {
+  const btns = document.querySelectorAll('.run-btn');
+  btns.forEach(b => (b.disabled = true));
+
+  try {
+    const res = await fetch('/api/tasks/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || data.message || 'Failed');
+    console.log(`▶ Task triggered: ${name}`);
+  } catch (e) {
+    console.error(`Error running task ${name}:`, e);
+  } finally {
+    setTimeout(fetchTasks, 1200);
+    btns.forEach(b => (b.disabled = false));
+  }
+}
+
+// Initial load + auto-refresh
+fetchTasks();
+setInterval(fetchTasks, 10000);
+</script>
+{% endblock %}

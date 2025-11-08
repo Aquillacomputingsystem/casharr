@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="updates">
+  <h2>System: Updates</h2>
+
+  {% if local_version %}
+    <p class="version-banner">
+      <strong>Current Version:</strong> {{ local_version }}
+      {% if latest_version %}
+        — <strong>Latest on GitHub:</strong> {{ latest_version }}
+      {% endif %}
+    </p>
+    {% if status == "up_to_date" %}
+      <div class="banner ok">✅ You’re running the latest version.</div>
+    {% elif status == "outdated" %}
+      <div class="banner warn">🚀 A new version is available — update recommended!</div>
+    {% else %}
+      <div class="banner neutral">ℹ️ Version check unavailable.</div>
+    {% endif %}
+  {% endif %}
+
+  {% if error %}
+    <p class="error">⚠️ {{ error }}</p>
+  {% elif updates %}
+    {% for release in updates %}
+      <div class="update-card">
+        <h3>Version {{ release.version }} — {{ release.name }}</h3>
+        <p><strong>Released:</strong> {{ release.date }}</p>
+        <details class="changelog-block">
+          <summary>View Changelog</summary>
+          <pre class="changelog">{{ release.body }}</pre>
+        </details>
+        <a href="{{ release.url }}" class="btn" target="_blank">View on GitHub</a>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p>No release data available.</p>
+  {% endif %}
+</section>
+{% endblock %}

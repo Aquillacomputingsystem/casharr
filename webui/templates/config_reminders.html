@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>Reminders, Messages & Trial Settings</h2>
+  <p class="desc">
+    Configure reminder intervals, message templates, and trial settings.<br>
+    Values are loaded from <code>config/config.ini</code> across <code>[Reminders]</code>, <code>[Messages]</code>, and <code>[Trial]</code>.
+  </p>
+
+  <form method="post" class="config-form">
+
+    <!-- ────── REMINDER SETTINGS ────── -->
+    <div class="config-section">
+      <h3>📅 Reminder Settings</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Enable Reminders</span>
+          <select name="Enabled">
+            <option value="true" {% if config.get('enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Yes</option>
+            <option value="false" {% if config.get('enabled','').lower() in ['0','false','no'] %}selected{% endif %}>No</option>
+          </select>
+          <small>Enable or disable automatic DM reminders.</small>
+        </label>
+
+        <label>
+          <span>Reminder Days Before Expiry</span>
+          <input type="number" name="DaysBeforeExpiry" value="{{ config.get('daysbeforeexpiry','3') }}" min="1" max="30">
+          <small>How many days before expiry a member will receive a reminder.</small>
+        </label>
+      </div>
+    </div>
+
+    <hr class="form-divider">
+
+    <!-- ────── MESSAGE TEMPLATES ────── -->
+    <div class="config-section">
+      <h3>💬 Message Templates</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Welcome Message</span>
+          <textarea name="Welcome" rows="3">{{ config.get('welcome','') | replace('\\n', '\n') }}</textarea>
+          <small>Sent when a new member joins the server.</small>
+        </label>
+
+        <label>
+          <span>Trial Reminder Message</span>
+          <textarea name="TrialReminder" rows="3">{{ config.get('trialreminder','') | replace('\\n', '\n') }}</textarea>
+          <small>Message sent when a trial period is nearing its end.</small>
+        </label>
+
+        <label>
+          <span>Paid Reminder Message</span>
+          <textarea name="PaidReminder" rows="3">{{ config.get('paidreminder','') | replace('\\n', '\n') }}</textarea>
+          <small>Message sent when a subscription renewal is due.</small>
+        </label>
+      </div>
+    </div>
+
+    <hr class="form-divider">
+
+    <!-- ────── TRIAL SETTINGS ────── -->
+    <div class="config-section">
+      <h3>⏳ Trial Settings</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Trial Duration (Days)</span>
+          <input type="number" name="DurationDays" value="{{ config.get('durationdays','30') }}" min="1" max="90">
+          <small>Length of the trial period for new users.</small>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">💾 Save Changes</button>
+      <a href="/dashboard" class="btn">Cancel</a>
+    </div>
+  </form>
+</section>
+
+<style>
+  .config-form { max-width: 900px; margin-top: 1rem; }
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.2rem;
+  }
+  label {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elev);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  label span { font-weight: 600; margin-bottom: 6px; }
+  input[type="text"], input[type="number"], textarea, select {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  textarea { resize: vertical; white-space: pre-wrap; min-height: 70px; }
+  small { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+  .form-divider { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+  .form-actions { margin-top: 1.5rem; display: flex; gap: 12px; }
+  .btn { background: var(--bg-elev); color: var(--text); border: 1px solid var(--border);
+        padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  .btn-primary { background: var(--accent); color: #fff; border: none; }
+  .btn:hover { opacity: 0.9; }
+</style>
+{% endblock %}

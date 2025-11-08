@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="system-backups">
+  <div class="header-bar">
+    <button id="btnBackupNow" class="btn primary">
+      💾 Backup Now
+    </button>
+    <label for="restoreFile" class="btn secondary">
+      🔁 Restore Backup
+    </label>
+    <input type="file" id="restoreFile" style="display:none;" accept=".db,.zip" />
+  </div>
+
+  {% if backups and backups|length > 0 %}
+  <table class="styled-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Size</th>
+        <th>Time</th>
+        <th style="width:80px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in backups %}
+      <tr>
+        <td>{{ b.name }}</td>
+        <td>{{ b.size }}</td>
+        <td>{{ b.date }}</td>
+        <td class="actions">
+          <form method="POST" action="/system/restore/{{ b.name }}" style="display:inline;">
+            <button title="Restore" class="icon-btn" type="submit">⟳</button>
+          </form>
+          <form method="POST" action="/system/delete/{{ b.name }}" style="display:inline;">
+            <button title="Delete" class="icon-btn danger" type="submit">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <p>No backups found. Create your first backup using the button above.</p>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+  document.getElementById("btnBackupNow").addEventListener("click", async () => {
+    const res = await fetch("/system/backup_now");
+    const text = await res.text();
+    alert(text);
+    window.location.reload();
+  });
+
+  document.getElementById("restoreFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/system/restore_upload", { method: "POST", body: formData });
+    alert(await res.text());
+    window.location.reload();
+  });
+</script>
+{% endblock %}

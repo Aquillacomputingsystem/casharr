@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="login">
+  <h2>🔒 Casharr Login</h2>
+  {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" class="config-form" style="max-width:400px;margin:auto;">
+    <label>
+      <span>Username</span>
+      <input type="text" name="username" autofocus required>
+    </label>
+    <label>
+      <span>Password</span>
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="btn btn-primary">Login</button>
+  </form>
+</section>
+{% endblock %}

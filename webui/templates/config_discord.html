@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>🤖 Discord Configuration</h2>
+  <p class="desc">
+    Manage your Discord bot settings, roles, and admin channel information.  
+    Values are read and saved from <code>config/config.ini</code> under the <code>[Discord]</code> section.
+  </p>
+
+  <form method="post" class="config-form">
+
+    <!-- ────── BOT & CHANNEL INFO ────── -->
+    <div class="config-section">
+      <h3>⚙️ Bot Connection</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Bot Token</span>
+          <input type="text" name="BotToken" value="{{ config.get('bottoken', '') }}" placeholder="YOUR_BOT_TOKEN_HERE">
+          <small>Discord bot authentication token (keep private).</small>
+        </label>
+
+        <label>
+          <span>Admin Channel ID</span>
+          <input type="text" name="AdminChannelID" value="{{ config.get('adminchannelid', '') }}" placeholder="123456789012345678">
+          <small>Channel ID for admin logs and notifications.</small>
+        </label>
+      </div>
+    </div>
+
+    <hr class="form-divider">
+
+    <!-- ────── ROLES ────── -->
+    <div class="config-section">
+      <h3>🧩 Role Configuration</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Initial Role</span>
+          <input type="text" name="InitialRole" value="{{ config.get('initialrole', '') }}" placeholder="Member">
+          <small>Assigned when a new member joins but hasn’t started a trial yet.</small>
+        </label>
+
+        <label>
+          <span>Trial Role</span>
+          <input type="text" name="TrialRole" value="{{ config.get('trialrole', '') }}" placeholder="Trial">
+          <small>Given to members during their trial period.</small>
+        </label>
+
+        <label>
+          <span>Payer Role</span>
+          <input type="text" name="PayerRole" value="{{ config.get('payerrole', '') }}" placeholder="Payer">
+          <small>Automatically assigned after successful payment.</small>
+        </label>
+
+        <label>
+          <span>Lifetime Role</span>
+          <input type="text" name="LifetimeRole" value="{{ config.get('lifetimerole', '') }}" placeholder="Lifetime">
+          <small>For members with permanent access (never expires).</small>
+        </label>
+
+        <label>
+          <span>Admin Role</span>
+          <input type="text" name="AdminRole" value="{{ config.get('adminrole', '') }}" placeholder="Admin">
+          <small>Users with this role can manage Casharr commands and settings.</small>
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── ACTION BUTTONS ────── -->
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">💾 Save Changes</button>
+      <a href="/dashboard" class="btn">Cancel</a>
+    </div>
+
+  </form>
+</section>
+
+<style>
+  .config-form { max-width: 900px; margin-top: 1rem; }
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.2rem;
+  }
+  label {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elev);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  label span {
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  input[type="text"] {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .form-divider {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 1.5rem 0;
+  }
+  small {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .form-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 12px;
+  }
+  .btn {
+    background: var(--bg-elev);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+  }
+  .btn:hover { opacity: 0.9; }
+  .desc { color: var(--text-muted); margin-bottom: 1rem; }
+</style>
+{% endblock %}

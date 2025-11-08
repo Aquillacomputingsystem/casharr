@@ -1,0 +1,8 @@
+discord.py>=2.6.0
+Flask>=2.3.2
+plexapi>=4.17.1
+requests>=2.31.0
+reportlab>=4.2.0
+qrcode[pil]>=7.4
+psutil>=5.9.0
+schedule

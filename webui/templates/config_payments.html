@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>💳 Payments, Pricing & PayPal</h2>
+  <p class="desc">
+    Configure pricing tiers, promotional discounts, referral bonuses, and PayPal integration.<br>
+    These values are read from <code>config/config.ini</code>.
+  </p>
+
+  <form method="post" class="config-form">
+
+    <!-- ────── PRICING ────── -->
+    <div class="config-section">
+      <h3>💰 Pricing (Standard)</h3>
+      <div class="form-row">
+        <label>
+          <span>Default Currency</span>
+          <input type="text" name="DefaultCurrency" value="{{ config.get('defaultcurrency', 'AUD') }}">
+        </label>
+      </div>
+      <div class="form-grid-4">
+        <label><span>1 Month</span>
+          <input type="number" step="0.01" name="1Month" value="{{ config.get('1month', '') }}">
+        </label>
+        <label><span>3 Months</span>
+          <input type="number" step="0.01" name="3Months" value="{{ config.get('3months', '') }}">
+        </label>
+        <label><span>6 Months</span>
+          <input type="number" step="0.01" name="6Months" value="{{ config.get('6months', '') }}">
+        </label>
+        <label><span>12 Months</span>
+          <input type="number" step="0.01" name="12Months" value="{{ config.get('12months', '') }}">
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── PROMO ────── -->
+    <div class="config-section">
+      <h3>🎁 Promotional Pricing</h3>
+      <div class="form-row">
+        <label>
+          <span>Enable Promotions</span>
+          <select name="PromoEnabled">
+            <option value="true" {% if config.get('enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if config.get('enabled','').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-grid-4">
+        <label><span>1 Month Discount</span>
+          <input type="number" step="0.01" name="Discount1Month" value="{{ config.get('discount1month', '') }}">
+        </label>
+        <label><span>3 Months Discount</span>
+          <input type="number" step="0.01" name="Discount3Months" value="{{ config.get('discount3months', '') }}">
+        </label>
+        <label><span>6 Months Discount</span>
+          <input type="number" step="0.01" name="Discount6Months" value="{{ config.get('discount6months', '') }}">
+        </label>
+        <label><span>12 Months Discount</span>
+          <input type="number" step="0.01" name="Discount12Months" value="{{ config.get('discount12months', '') }}">
+        </label>
+      </div>
+      <label class="wide">
+        <span>Promo Note</span>
+        <textarea name="PromoNote" rows="2">{{ config.get('note', '') }}</textarea>
+      </label>
+    </div>
+
+    <!-- ────── REFERRAL ────── -->
+    <div class="config-section">
+      <h3>🤝 Referral Bonuses</h3>
+      <div class="form-row">
+        <label>
+          <span>Enable Referrals</span>
+          <select name="ReferralEnabled">
+            <option value="true" {% if config.get('enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if config.get('enabled','').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-grid-4">
+        <label><span>1 Month Bonus (days)</span>
+          <input type="number" name="Bonus1Month" value="{{ config.get('bonus1month', '7') }}">
+        </label>
+        <label><span>3 Months Bonus (days)</span>
+          <input type="number" name="Bonus3Months" value="{{ config.get('bonus3months', '14') }}">
+        </label>
+        <label><span>6 Months Bonus (days)</span>
+          <input type="number" name="Bonus6Months" value="{{ config.get('bonus6months', '30') }}">
+        </label>
+        <label><span>12 Months Bonus (days)</span>
+          <input type="number" name="Bonus12Months" value="{{ config.get('bonus12months', '60') }}">
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── PAYPAL ────── -->
+    <div class="config-section">
+      <h3>🅿️ PayPal Integration</h3>
+      <div class="form-grid-3">
+        <label><span>Mode</span>
+          <select name="Mode">
+            <option value="live" {% if config.get('mode','').lower() == 'live' %}selected{% endif %}>Live</option>
+            <option value="sandbox" {% if config.get('mode','').lower() == 'sandbox' %}selected{% endif %}>Sandbox</option>
+          </select>
+        </label>
+        <label><span>Business Email</span>
+          <input type="email" name="BusinessEmail" value="{{ config.get('businessemail','') }}">
+        </label>
+        <label><span>Payment Base Link</span>
+          <input type="url" name="PaymentBaseLink" value="{{ config.get('paymentbaselink','') }}">
+        </label>
+      </div>
+      <div class="form-grid-2">
+        <label><span>IPN URL</span>
+          <input type="url" name="IPN_URL" value="{{ config.get('ipn_url','') }}">
+        </label>
+        <label><span>IPN Listen Port</span>
+          <input type="number" name="IPNListenPort" value="{{ config.get('ipnlistenport','5000') }}">
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── ACTIONS ────── -->
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">💾 Save Changes</button>
+    </div>
+  </form>
+</section>
+
+<style>
+  .form-grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .form-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  input, select, textarea {
+    width: 100%;
+    box-sizing: border-box;
+  }
+</style>
+{% endblock %}

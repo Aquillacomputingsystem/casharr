@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>⚙️ System Settings</h2>
+  <p class="desc">
+    Configure system-wide settings for Casharr, including access mode, network address, authentication, and email alerts.<br>
+    These values are stored in <code>config/config.ini</code>.
+  </p>
+
+  <form method="post" class="config-form">
+    <!-- ────── GENERAL AUTOMATION ────── -->
+    <div class="config-section">
+      <h3>🧠 Access & Automation</h3>
+      <div class="form-grid">
+        <label>
+          <span>Access Enforcement Mode</span>
+          <select name="AccessMode">
+            <option value="Auto" {% if access_mode|lower == 'auto' %}selected{% endif %}>Auto (Full Automation)</option>
+            <option value="Manual" {% if access_mode|lower == 'manual' %}selected{% endif %}>Manual (Admin Confirmation)</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── NETWORK SETTINGS ────── -->
+    <div class="config-section">
+      <h3>🌐 Network Access</h3>
+      <div class="form-grid">
+        <label>
+          <span>External Address</span>
+          <input type="text" name="ExternalAddress" value="{{ ext_address }}" placeholder="https://casharr.yourdomain.com">
+        </label>
+        <label>
+          <span>Web Port</span>
+          <input type="number" name="Port" value="{{ port }}" min="80" max="65535">
+        </label>
+      </div>
+      <div class="form-grid">
+        <label>
+          <span>Allow External Access</span>
+          <select name="AllowExternal">
+            <option value="true" {% if allow_external %}selected{% endif %}>Yes</option>
+            <option value="false" {% if not allow_external %}selected{% endif %}>No</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── SECURITY SETTINGS ────── -->
+    <div class="config-section">
+      <h3>🔒 Web Interface Authentication</h3>
+      <div class="form-grid">
+        <label>
+          <span>Admin Username</span>
+          <input type="text" name="AdminUser" value="{{ admin_user }}" placeholder="admin">
+        </label>
+        <label>
+          <span>Admin Password</span>
+          <input type="password" name="AdminPass" value="{{ admin_pass }}" placeholder="••••••••">
+        </label>
+      </div>
+      <p class="hint">
+        When both fields are filled, the WebUI will require login using these credentials. Leave blank to disable authentication.
+      </p>
+    </div>
+
+    <!-- ────── EMAIL (SMTP) ────── -->
+    <div class="config-section">
+      <h3>📬 Email (SMTP)</h3>
+      <div class="form-grid">
+        <label>
+          <span>Enable Email Alerts</span>
+          <select name="SMTPEnabled">
+            <option value="true" {% if smtp_enabled %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if not smtp_enabled %}selected{% endif %}>Disabled</option>
+          </select>
+        </label>
+        <label>
+          <span>SMTP Server</span>
+          <input type="text" name="SMTPServer" value="{{ smtp_server }}" placeholder="smtp.gmail.com">
+        </label>
+        <label>
+          <span>SMTP User</span>
+          <input type="text" name="SMTPUser" value="{{ smtp_user }}" placeholder="you@email.com">
+        </label>
+        <label>
+          <span>SMTP Password</span>
+          <input type="password" name="SMTPPass" value="{{ smtp_pass }}" placeholder="App password">
+        </label>
+        <label>
+          <span>Send To (Admin Email)</span>
+          <input type="email" name="SMTPTo" value="{{ smtp_to }}" placeholder="admin@email.com">
+        </label>
+      </div>
+      <button type="button" class="btn" onclick="sendTestEmail()">✉️ Send Test Email</button>
+      <p id="smtpResult" class="hint" style="margin-top:.5rem;"></p>
+    </div>
+
+    <!-- ────── ADDITIONAL OPTIONS ────── -->
+    <div class="config-section">
+      <h3>🧩 Other Settings</h3>
+      <div class="form-grid">
+        <label>
+          <span>Log Retention (Days)</span>
+          <input type="number" name="LogRetention" value="{{ log_retention }}" min="1" max="365">
+        </label>
+        <label>
+          <span>Enable Debug Mode</span>
+          <select name="Debug">
+            <option value="true" {% if debug_mode %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if not debug_mode %}selected{% endif %}>Disabled</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- ────── SAVE BUTTON ────── -->
+    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+  </form>
+</section>
+
+<script>
+async function sendTestEmail() {
+  const out = document.getElementById('smtpResult');
+  out.textContent = 'Sending test email...';
+  try {
+    const res = await fetch('/api/test_email', { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+    out.textContent = '✅ Test email sent.';
+  } catch (e) {
+    out.textContent = '⚠️ ' + (e.message || 'Failed to send email.');
+  }
+}
+</script>
+{% endblock %}

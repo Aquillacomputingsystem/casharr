@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="reports">
+  <div class="page-header">
+    <h2>📊 Reports</h2>
+    <p class="text-muted">View summary statistics and export a detailed snapshot of all Casharr members.</p>
+  </div>
+
+  <!-- Buttons -->
+  <div class="action-bar">
+    <button class="btn btn-accent" onclick="generateReport()">🧾 Generate Report</button>
+    <button class="btn" onclick="downloadLatest()">⬇️ Download Latest</button>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card">
+      <h3>Total Members</h3>
+      <span class="value" id="total">–</span>
+    </div>
+    <div class="card">
+      <h3>Active Trials</h3>
+      <span class="value" id="trials">–</span>
+    </div>
+    <div class="card">
+      <h3>Active Payers</h3>
+      <span class="value" id="payers">–</span>
+    </div>
+    <div class="card">
+      <h3>Expired</h3>
+      <span class="value" id="expired">–</span>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-section">
+    <h3>Recent Members</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Discord Tag</th>
+          <th>Email</th>
+          <th>Trial End</th>
+          <th>Paid Until</th>
+          <th>Referrer</th>
+        </tr>
+      </thead>
+      <tbody id="membersTable">
+        <tr><td colspan="5" style="text-align:center;">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+async function generateReport() {
+  const btn = document.querySelector('.btn.btn-accent');
+  btn.disabled = true;
+  btn.textContent = "Generating...";
+  try {
+    const res = await fetch("/api/report/generate");
+    const data = await res.json();
+    alert(data.message || "Report generated!");
+  } catch (err) {
+    alert("⚠️ Failed to generate report.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🧾 Generate Report";
+  }
+}
+
+function downloadLatest() {
+  window.location.href = "/api/report/latest";
+}
+
+// Load summary + preview table
+fetch("/api/report/summary")
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('total').textContent = data.total || 0;
+    document.getElementById('trials').textContent = data.trials || 0;
+    document.getElementById('payers').textContent = data.payers || 0;
+    document.getElementById('expired').textContent = data.expired || 0;
+
+    const tbody = document.getElementById('membersTable');
+    tbody.innerHTML = "";
+    if (data.members.length === 0) {
+      tbody.innerHTML = "<tr><td colspan='5' style='text-align:center;'>No members found.</td></tr>";
+    } else {
+      data.members.forEach(m => {
+        const row = `<tr>
+          <td>${m.tag || '-'}</td>
+          <td>${m.email || '-'}</td>
+          <td>${m.trial_end || '-'}</td>
+          <td>${m.paid_until || '-'}</td>
+          <td>${m.referrer || '-'}</td>
+        </tr>`;
+        tbody.insertAdjacentHTML('beforeend', row);
+      });
+    }
+  })
+  .catch(() => {
+    const tbody = document.getElementById('membersTable');
+    tbody.innerHTML = "<tr><td colspan='5' style='text-align:center;'>⚠️ Failed to load data.</td></tr>";
+  });
+</script>
+
+<style>
+.page-header {
+  margin-bottom: 1rem;
+}
+.action-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 1.5rem;
+}
+.btn {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.btn:hover {
+  background: var(--sb-bg-hover);
+  color: var(--accent);
+}
+.btn-accent {
+  background: var(--accent);
+  color: white;
+  border: none;
+}
+.btn-accent:hover {
+  background: var(--accent-strong);
+}
+.table-section {
+  margin-top: 2rem;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: var(--font-sm);
+  box-shadow: var(--shadow-sm);
+}
+.data-table th, .data-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  text-align: left;
+}
+.data-table th {
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.data-table tr:hover {
+  background: var(--sb-bg-hover);
+}
+</style>
+{% endblock %}

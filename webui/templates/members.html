@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="members">
+  <div class="header-row">
+    <h2>👥 Members</h2>
+    <div class="actions">
+      <input id="searchInput" class="search" placeholder="Search name, email, or role…" />
+      <button id="refreshBtn" class="btn">⟳ Refresh</button>
+      <button id="addBtn" class="btn btn-primary">＋ Add / Update</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Discord Tag</th>
+          <th>Email</th>
+          <th>Trial End</th>
+          <th>Paid Until</th>
+          <th>Status</th>
+          <th>Role</th>
+          <th>Referrer</th>
+          <th style="width:130px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="membersBody">
+        <tr><td colspan="8">Loading members...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Modal -->
+<div id="modal" class="modal hidden">
+  <div class="modal__card">
+    <header class="modal__head">
+      <h3>Add / Update Member</h3>
+      <button id="modalClose" class="icon-btn" title="Close">✕</button>
+    </header>
+    <div class="modal__body">
+      <div class="grid">
+        <label><span>Discord ID</span><input id="m_discord_id" placeholder="123456789012345678"></label>
+        <label><span>Discord Tag</span><input id="m_discord_tag" placeholder="username#1234"></label>
+        <label><span>First Name</span><input id="m_first" placeholder="First"></label>
+        <label><span>Last Name</span><input id="m_last" placeholder="Last"></label>
+        <label class="span-2"><span>Email</span><input id="m_email" placeholder="plex@example.com"></label>
+        <label class="span-2"><span>Mobile</span><input id="m_mobile" placeholder="+61…"></label>
+      </div>
+    </div>
+    <footer class="modal__foot">
+      <button id="modalSave" class="btn btn-primary">Save</button>
+      <button id="modalCancel" class="btn">Cancel</button>
+    </footer>
+  </div>
+</div>
+
+<style>
+/* ───── Layout ───── */
+.members .header-row {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:14px; gap:12px;
+}
+.members .header-row h2 {
+  font-size:1.4rem; font-weight:600; color:var(--text);
+}
+.members .actions { display:flex; gap:8px; align-items:center; }
+
+/* ───── Table ───── */
+.table-wrap {
+  overflow:auto;
+  border-radius:var(--radius);
+  background:var(--bg-elev);
+  box-shadow:var(--shadow-sm);
+}
+.table {
+  width:100%;
+  border-collapse:collapse;
+}
+.table th, .table td {
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  text-align:left;
+}
+.table th {
+  background:var(--bg-elev);
+  color:var(--text-muted);
+  font-weight:600;
+  font-size:14px;
+}
+.table tbody tr:hover {
+  background:rgba(0,200,150,0.05);
+}
+.theme-dark .table tbody tr:hover {
+  background:rgba(0,200,150,0.08);
+}
+
+/* ───── Buttons ───── */
+.btn {
+  padding:7px 14px;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  font-weight:500;
+  background:var(--accent);
+  color:#fff;
+  transition:background .2s ease, transform .1s ease;
+}
+.btn:hover { background:var(--accent-strong); transform:translateY(-1px); }
+.btn:active { transform:none; }
+.btn-primary { background:var(--accent-strong); }
+.btn:disabled { opacity:0.6; cursor:not-allowed; }
+
+/* ───── Role dropdown ───── */
+.role-select {
+  padding:6px 8px;
+  border-radius:6px;
+  border:1px solid var(--border);
+  background:var(--bg);
+  color:var(--text);
+  font-size:13px;
+}
+
+/* ───── Status pills ───── */
+.status-pill {
+  display:inline-flex; align-items:center;
+  padding:3px 8px; border-radius:999px;
+  font-size:12px; font-weight:500;
+  border:1px solid transparent;
+}
+.status-trial { background:#fff7e6; color:#8a6d3b; }
+.status-payer { background:#e8fff6; color:#2b7a54; }
+.status-life  { background:#e6f0ff; color:#2952a3; }
+.status-exp   { background:#ffeaea; color:#a33a3a; }
+
+/* ───── Modal ───── */
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:grid; place-items:center; z-index:50; }
+.modal.hidden { display:none; }
+.modal__card {
+  width:min(650px,95vw);
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:10px;
+  box-shadow:var(--shadow-md);
+  overflow:hidden;
+}
+.modal__head, .modal__foot {
+  padding:12px 16px;
+  background:var(--bg-elev);
+  border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+}
+.modal__foot {
+  border-top:1px solid var(--border); border-bottom:none;
+  justify-content:flex-end; gap:8px;
+}
+.modal__body { padding:16px; }
+.grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+.grid .span-2 { grid-column:span 2; }
+.grid label span {
+  display:block; font-size:12px; color:var(--text-muted);
+  margin-bottom:4px;
+}
+.grid input {
+  width:100%; padding:8px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--bg);
+  color:var(--text);
+}
+.icon-btn {
+  border:1px solid var(--border);
+  background:var(--bg-elev);
+  border-radius:6px;
+  padding:5px 10px;
+  cursor:pointer;
+  font-size:13px;
+}
+.icon-btn:hover { filter:brightness(1.05); }
+.icon-btn.danger { background:#ffefef; color:#a00000; }
+.action-bar { display:flex; gap:6px; }
+</style>
+
+<script>
+const $body = document.getElementById('membersBody');
+const $search = document.getElementById('searchInput');
+const $refresh = document.getElementById('refreshBtn');
+const $add = document.getElementById('addBtn');
+const $modal = document.getElementById('modal');
+const $close = document.getElementById('modalClose');
+const $cancel = document.getElementById('modalCancel');
+const $save = document.getElementById('modalSave');
+
+const $id = document.getElementById('m_discord_id');
+const $tag = document.getElementById('m_discord_tag');
+const $first = document.getElementById('m_first');
+const $last = document.getElementById('m_last');
+const $email = document.getElementById('m_email');
+const $mobile = document.getElementById('m_mobile');
+
+let cache = [];
+
+function statusPill(status) {
+  const s = String(status || '').toLowerCase();
+  const cls = s==='trial'?'status-trial':s==='payer'?'status-payer':s==='lifetime'?'status-life':s==='expired'?'status-exp':'';
+  return `<span class="status-pill ${cls}">${status||'-'}</span>`;
+}
+function roleSelect(cur){
+  const roles=['No Access','Trial','Payer','Lifetime'];
+  return `<select class="role-select">${roles.map(r=>`<option ${r===cur?'selected':''}>${r}</option>`).join('')}</select>`;
+}
+function renderRows(list){
+  if(!list.length){$body.innerHTML='<tr><td colspan="8">No members found.</td></tr>';return;}
+  $body.innerHTML=list.map(m=>`
+    <tr data-id="${m.discord_id}">
+      <td>${m.discord_tag||'-'}</td>
+      <td>${m.email||'-'}</td>
+      <td>${m.trial_end||'-'}</td>
+      <td>${m.paid_until||'-'}</td>
+      <td>${statusPill(m.status)}</td>
+      <td>${roleSelect(m.discord_role)}</td>
+      <td>${m.referrer_id||'-'}</td>
+      <td><div class="action-bar">
+        <button class="icon-btn js-remove danger">Remove</button>
+        <button class="icon-btn js-copy">Copy ID</button>
+      </div></td>
+    </tr>`).join('');
+}
+async function loadMembers(){
+  try{
+    const res=await fetch('/api/members');
+    const data=await res.json();
+    cache=data.members||[];
+    applyFilter();
+  }catch{ $body.innerHTML='<tr><td colspan="8">⚠️ Failed to load members.</td></tr>'; }
+}
+function applyFilter(){
+  const q=$search.value.trim().toLowerCase();
+  const f=!q?cache:cache.filter(m=>
+    (m.discord_tag||'').toLowerCase().includes(q)||
+    (m.email||'').toLowerCase().includes(q)||
+    (m.status||'').toLowerCase().includes(q)||
+    (m.discord_role||'').toLowerCase().includes(q)
+  );
+  renderRows(f);
+}
+$search.addEventListener('input',applyFilter);
+$refresh.addEventListener('click',loadMembers);
+$add.addEventListener('click',()=> $modal.classList.remove('hidden'));
+[$close,$cancel].forEach(b=>b.addEventListener('click',()=> $modal.classList.add('hidden')));
+$save.addEventListener('click',async()=>{
+  const payload={discord_id:$id.value,discord_tag:$tag.value,first_name:$first.value,last_name:$last.value,email:$email.value,mobile:$mobile.value};
+  try{
+    const res=await fetch('/api/member',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await res.json();
+    if(!j.ok)throw new Error(j.error||'Save failed');
+    $modal.classList.add('hidden');loadMembers();
+  }catch(e){alert('❌ '+e.message);}
+});
+$body.addEventListener('change',async e=>{
+  const sel=e.target.closest('.role-select'); if(!sel)return;
+  const tr=e.target.closest('tr'); const id=tr.dataset.id; const role=sel.value;
+  try{
+    sel.disabled=true;
+    const res=await fetch(`/api/member/${id}/role`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role})});
+    const j=await res.json();
+    if(!j.ok)throw new Error(j.error||'Role change failed');
+    loadMembers();
+  }catch(err){alert('⚠️ '+err.message);} finally{sel.disabled=false;}
+});
+$body.addEventListener('click',async e=>{
+  const btn=e.target.closest('.js-remove'); const copy=e.target.closest('.js-copy'); const tr=e.target.closest('tr');
+  if(!tr)return; const id=tr.dataset.id;
+  if(copy){await navigator.clipboard.writeText(id);copy.textContent='Copied';setTimeout(()=>copy.textContent='Copy ID',1000);return;}
+  if(btn){if(!confirm('Remove Plex + downgrade to No Access?'))return;
+    try{
+      const res=await fetch(`/api/member/${id}/delete`,{method:'POST'});
+      const j=await res.json(); if(!j.ok)throw new Error(j.error||'Remove failed');
+      loadMembers();
+    }catch(err){alert('⚠️ '+err.message);}
+  }
+});
+loadMembers();
+</script>
+{% endblock %}

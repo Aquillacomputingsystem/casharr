@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="logs">
+  <h2>System Log Files</h2>
+  <p>Below are the persistent Casharr logs. Click a file to expand or download it.</p>
+
+  <div class="log-list">
+    {% for log in logs %}
+    <details class="log-card">
+      <summary>
+        <div class="log-header">
+          <span class="log-name">{{ log.name }}</span>
+          <a class="btn-download" href="{{ url_for('webui.download_log', filename=log.name) }}" download>
+            ⬇️ Download
+          </a>
+        </div>
+      </summary>
+      <pre class="log-content">{{ log.content | e }}</pre>
+    </details>
+    {% else %}
+    <div class="card empty">
+      <h3>No log files found</h3>
+      <p>Logs will appear here once the system runs.</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

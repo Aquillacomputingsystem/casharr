@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>🎬 Plex Configuration</h2>
+  <p class="desc">
+    Manage your Plex integration, access mode, and connected libraries.<br>
+    These values are read from <code>config/config.ini</code>.
+  </p>
+
+  <form method="post" class="config-form">
+    <!-- ────── PLEX SETTINGS ────── -->
+    <div class="config-section">
+      <h3>🔑 Plex Server Connection</h3>
+      <div class="form-grid">
+        <label>
+          <span>Plex URL</span>
+          <input type="text" name="URL" value="{{ config.get('URL', '') }}" placeholder="http://192.168.x.x:32400">
+        </label>
+        <label>
+          <span>Plex Token</span>
+          <input type="password" name="Token" value="{{ config.get('Token', '') }}" placeholder="YOUR_PLEX_TOKEN_HERE">
+        </label>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          <span>Libraries (comma-separated)</span>
+          <input type="text" name="Libraries" value="{{ config.get('Libraries', '') }}" placeholder="Movies, TV Shows">
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary">💾 Save Changes</button>
+      <button type="button" class="btn" id="testPlex">🔍 Test Plex Connection</button>
+    </div>
+
+    <!-- ────── TEST RESULT AREA ────── -->
+    <div id="plexTestResult" class="test-result" style="margin-top: 10px;"></div>
+  </form>
+</section>
+
+<script>
+document.getElementById("testPlex").addEventListener("click", async () => {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "Testing…";
+
+  try {
+    const res = await fetch("/config/plex/test", { method: "POST" });
+    const data = await res.json();
+    const box = document.getElementById("plexTestResult");
+
+    if (data.status === "ok") {
+      box.innerHTML = `✅ Connected successfully to <b>${data.server}</b> (${data.libraries.length} libraries)`;
+      box.style.color = "var(--accent)";
+    } else {
+      box.innerHTML = `❌ Connection failed: ${data.error}`;
+      box.style.color = "red";
+    }
+  } catch (err) {
+    document.getElementById("plexTestResult").innerText = "⚠️ Test failed: " + err;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 Test Plex Connection";
+  }
+});
+</script>
+{% endblock %}

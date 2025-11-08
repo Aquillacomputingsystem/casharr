@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="reports">
+  <h2>📊 Reports</h2>
+  <p>View member statistics and export a full snapshot of your Casharr database.</p>
+
+  <div class="actions" style="margin: 1em 0;">
+    <button class="btn accent" onclick="generateReport()">🧾 Generate Report</button>
+    <button class="btn" onclick="downloadLatest()">⬇️ Download Latest</button>
+  </div>
+
+  <div class="cards">
+    <div class="card"><h3>Total Members</h3><span id="total">–</span></div>
+    <div class="card"><h3>Active Trials</h3><span id="trials">–</span></div>
+    <div class="card"><h3>Active Payers</h3><span id="payers">–</span></div>
+    <div class="card"><h3>Expired</h3><span id="expired">–</span></div>
+  </div>
+
+  <h3 style="margin-top: 1.5em;">Recent Members</h3>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Discord Tag</th>
+        <th>Email</th>
+        <th>Trial End</th>
+        <th>Paid Until</th>
+        <th>Referrer</th>
+      </tr>
+    </thead>
+    <tbody id="membersTable">
+      <tr><td colspan="5" style="text-align:center;">Loading...</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<script>
+async function generateReport() {
+  const res = await fetch("/api/report/generate");
+  const data = await res.json();
+  alert(data.message || "Report generated!");
+}
+
+async function downloadLatest() {
+  window.location.href = "/api/report/latest";
+}
+
+// Load summary + table preview
+fetch("/api/report/summary")
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('total').textContent = data.total || 0;
+    document.getElementById('trials').textContent = data.trials || 0;
+    document.getElementById('payers').textContent = data.payers || 0;
+    document.getElementById('expired').textContent = data.expired || 0;
+
+    const tbody = document.getElementById('membersTable');
+    tbody.innerHTML = "";
+    data.members.forEach(m => {
+      const row = `<tr>
+        <td>${m.tag}</td>
+        <td>${m.email}</td>
+        <td>${m.trial_end || '-'}</td>
+        <td>${m.paid_until || '-'}</td>
+        <td>${m.referrer || '-'}</td>
+      </tr>`;
+      tbody.insertAdjacentHTML('beforeend', row);
+    });
+  });
+</script>
+{% endblock %}
