@@ -58,6 +58,9 @@ def init_db():
 
     # Add any missing columns automatically
     new_columns = [
+        ("referrer_id", "TEXT"),
+        ("is_referrer", "INTEGER DEFAULT 0"),
+        ("referral_paid", "INTEGER DEFAULT 0"),
         ("origin", "TEXT DEFAULT NULL"),
         ("discord_roles", "TEXT DEFAULT NULL"),
     ]
