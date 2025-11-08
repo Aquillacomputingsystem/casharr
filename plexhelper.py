@@ -22,6 +22,14 @@ class PlexHelper:
             if "Discord" in cfg and "AdminWebhookURL" in cfg["Discord"]:
                 self.admin_webhook = cfg["Discord"]["AdminWebhookURL"].strip() or None
 
+    def test_connection(self):
+        """Check whether the Plex server is reachable."""
+        try:
+            self.plex.library.sections()
+            return True
+        except Exception:
+            return False
+
     # ────────────────────────────────
     # Discord logging helper
     # ────────────────────────────────

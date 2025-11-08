@@ -77,6 +77,7 @@
   try {
     const statsRes = await fetch("/api/stats");
     if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
+    const stats = await statsRes.json();
     const vals = document.querySelectorAll(".cards .value");
     if (vals.length >= 4) {
       vals[0].textContent = stats.total ?? "–";

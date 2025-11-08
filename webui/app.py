@@ -567,6 +567,67 @@ def api_members():
         })
     return jsonify({"members": out})
 
+
+@webui.route("/api/member", methods=["POST"])
+def api_member_upsert():
+    payload = request.get_json(silent=True) or {}
+    discord_id = str(payload.get("discord_id", "")).strip()
+    if not discord_id:
+        return jsonify({"ok": False, "error": "Discord ID is required."}), 400
+
+    try:
+        add_or_update_member(
+            discord_id,
+            discord_tag=str(payload.get("discord_tag", "")).strip(),
+            first_name=str(payload.get("first_name", "")).strip(),
+            last_name=str(payload.get("last_name", "")).strip(),
+            email=str(payload.get("email", "")).strip(),
+            mobile=str(payload.get("mobile", "")).strip(),
+            origin="manual",
+        )
+        logger.info("Member %s saved via WebUI", discord_id)
+        return jsonify({"ok": True})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to upsert member %s", discord_id)
+        return jsonify({"ok": False, "error": "Internal server error."}), 500
+
+
+@webui.route("/api/member/<discord_id>/role", methods=["POST"])
+def api_member_set_role(discord_id):
+    payload = request.get_json(silent=True) or {}
+    role = payload.get("role")
+    if not role:
+        return jsonify({"ok": False, "error": "Role is required."}), 400
+
+    try:
+        update_member_role(discord_id, str(role))
+        logger.info("Updated role for %s to %s", discord_id, role)
+        return jsonify({"ok": True})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception:
+        logger.exception("Failed to update role for %s", discord_id)
+        return jsonify({"ok": False, "error": "Internal server error."}), 500
+
+
+@webui.route("/api/member/<discord_id>/delete", methods=["POST"])
+def api_member_delete(discord_id):
+    try:
+        try:
+            update_member_role(discord_id, "No Access")
+        except ValueError:
+            pass
+        removed = delete_member(discord_id)
+        if not removed:
+            return jsonify({"ok": False, "error": "Member not found."}), 404
+        logger.info("Removed member %s via WebUI", discord_id)
+        return jsonify({"ok": True})
+    except Exception:
+        logger.exception("Failed to delete member %s", discord_id)
+        return jsonify({"ok": False, "error": "Internal server error."}), 500
+
 # ───────────────────────────────
 # Reports
 # ───────────────────────────────
@@ -861,12 +922,17 @@ _start_time = time.time()
 @webui.route("/api/status")
 def api_status():
     try:
-        discord_online = hasattr(globals(), "bot") and getattr(globals()["bot"], "is_ready", lambda: False)()
-        try:
-            plex = PlexHelper()
-            plex_connected = plex.test_connection()
-        except Exception:
-            plex_connected = False
+        discord_online = getattr(bot, "is_ready", lambda: False)()
+        plex_connected = False
+        if plex is not None:
+            try:
+                plex_connected = plex.test_connection()
+            except AttributeError:
+                try:
+                    _ = plex.plex.friendlyName
+                    plex_connected = True
+                except Exception:
+                    plex_connected = False
 
         disk = psutil.disk_usage("/")
         disk_info = {
