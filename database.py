@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import configparser
 from datetime import datetime, timezone, timedelta
 
 # ─────────────────────────────
@@ -386,62 +387,94 @@ def has_active_trial(discord_id):
 # 🧩 Additional Helpers for WebUI CRUD Endpoints
 # ───────────────────────────────────────────────
 
-import sqlite3
-from datetime import datetime
+def _configured_trial_days(default: int = 30) -> int:
+    """Read the default trial duration from config.ini (fallback to 30)."""
+    cfg = configparser.ConfigParser()
+    try:
+        cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+        return cfg.getint("Trial", "DurationDays", fallback=default)
+    except Exception:
+        return default
 
-def add_or_update_member(discord_id, email="", trial_end=None, paid_until=None, role="Trial", referrer=None):
-    """
-    Insert or update a member record. If the discord_id exists, update the row.
-    """
+
+def add_or_update_member(
+    discord_id,
+    *,
+    discord_tag="",
+    first_name="",
+    last_name="",
+    email="",
+    mobile="",
+    origin="manual",
+):
+    """Upsert the core member fields used by the WebUI."""
+    if not discord_id:
+        raise ValueError("discord_id is required")
+
+    save_member(
+        discord_id=str(discord_id),
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        mobile=mobile,
+        discord_tag=discord_tag,
+        origin=origin,
+    )
+
+
+def delete_member(discord_id) -> bool:
+    """Remove a member by Discord ID. Returns True if a row was deleted."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Ensure date formatting
-    trial_end = trial_end or ""
-    paid_until = paid_until or ""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Try to update if exists, else insert
-    c.execute("""
-        SELECT id FROM members WHERE discord_id = ?
-    """, (discord_id,))
-    existing = c.fetchone()
-
-    if existing:
-        c.execute("""
-            UPDATE members
-            SET email=?, trial_end=?, paid_until=?, role=?, referrer=?, last_update=?
-            WHERE discord_id=?
-        """, (email, trial_end, paid_until, role, referrer, now, discord_id))
-    else:
-        c.execute("""
-            INSERT INTO members (discord_id, email, trial_end, paid_until, role, referrer, created_at, last_update)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (discord_id, email, trial_end, paid_until, role, referrer, now, now))
-
+    c.execute("DELETE FROM members WHERE discord_id = ?", (str(discord_id),))
+    deleted = c.rowcount
     conn.commit()
     conn.close()
+    return deleted > 0
 
 
-def delete_member(member_id):
-    """Remove a member by ID."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM members WHERE id = ?", (member_id,))
-    conn.commit()
-    conn.close()
+def update_member_role(discord_id, role: str):
+    """Update database state based on a human-readable role selection."""
+    if not discord_id:
+        raise ValueError("discord_id is required")
+    if not role:
+        raise ValueError("role is required")
 
+    normalized = role.strip().lower()
 
-def update_member_role(member_id, role):
-    """Update a member's role (Trial, Payer, Lifetime, etc)."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        UPDATE members
-        SET role=?, last_update=?
-        WHERE id=?
-    """, (role, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), member_id))
-    conn.commit()
-    conn.close()
+    if normalized == "no access":
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "UPDATE members SET trial_start=NULL, trial_end=NULL, paid_until=NULL WHERE discord_id=?",
+            (str(discord_id),),
+        )
+        conn.commit()
+        conn.close()
+        return
+
+    if normalized == "trial":
+        days = _configured_trial_days()
+        start_trial(discord_id, days)
+        return
+
+    if normalized == "payer":
+        update_payment(discord_id, 1)
+        return
+
+    if normalized == "lifetime":
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        far_future = datetime.now(timezone.utc) + timedelta(days=365 * 100)
+        c.execute(
+            "UPDATE members SET paid_until=?, trial_end=NULL WHERE discord_id=?",
+            (far_future.isoformat(), str(discord_id)),
+        )
+        conn.commit()
+        conn.close()
+        return
+
+    raise ValueError(f"Unsupported role '{role}'")
 
 # ─────────────────────────────
 # Initialize Database
