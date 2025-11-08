@@ -51,13 +51,15 @@ def init_db():
             referrer_id TEXT,
             is_referrer INTEGER DEFAULT 0,
             referral_paid INTEGER DEFAULT 0,
-            origin TEXT DEFAULT NULL   -- 'invite' or 'sync'
+            origin TEXT DEFAULT NULL,   -- 'invite' or 'sync'
+            discord_roles TEXT DEFAULT NULL
         )
     """)
 
     # Add any missing columns automatically
     new_columns = [
         ("origin", "TEXT DEFAULT NULL"),
+        ("discord_roles", "TEXT DEFAULT NULL"),
     ]
     for col_name, col_def in new_columns:
         try:
@@ -69,7 +71,8 @@ def init_db():
         ("referrer_id", "TEXT"),
         ("is_referrer", "INTEGER DEFAULT 0"),
         ("referral_paid", "INTEGER DEFAULT 0"),
-        ("origin", "TEXT DEFAULT NULL")
+        ("origin", "TEXT DEFAULT NULL"),
+        ("discord_roles", "TEXT DEFAULT NULL"),
     ]
     for col_name, col_def in new_columns:
         try:
@@ -84,21 +87,65 @@ def init_db():
 # ─────────────────────────────
 # Member Operations
 # ─────────────────────────────
-def save_member(discord_id, first_name="", last_name="", email="", mobile="", discord_tag="", origin="invite"):
+def save_member(
+    discord_id,
+    first_name="",
+    last_name="",
+    email="",
+    mobile="",
+    discord_tag="",
+    origin="invite",
+    roles=None,
+):
     """Insert or update a member’s basic info."""
+
+    roles_value = None
+    if roles is not None:
+        if isinstance(roles, str):
+            roles_value = roles.strip()
+        else:
+            cleaned = []
+            for item in roles:
+                text = str(item).strip()
+                if text:
+                    cleaned.append(text)
+            roles_value = ", ".join(cleaned)
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO members (discord_id, discord_tag, first_name, last_name, email, mobile, origin)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+    c.execute(
+        """
+        INSERT INTO members (
+            discord_id,
+            discord_tag,
+            first_name,
+            last_name,
+            email,
+            mobile,
+            origin,
+            discord_roles
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             discord_tag=excluded.discord_tag,
             first_name=excluded.first_name,
             last_name=excluded.last_name,
             email=excluded.email,
             mobile=excluded.mobile,
-            origin=COALESCE(members.origin, excluded.origin)
-    """, (str(discord_id), discord_tag, first_name, last_name, email, mobile, origin))
+            origin=COALESCE(members.origin, excluded.origin),
+            discord_roles=COALESCE(excluded.discord_roles, members.discord_roles)
+    """,
+        (
+            str(discord_id),
+            discord_tag,
+            first_name,
+            last_name,
+            email,
+            mobile,
+            origin,
+            roles_value,
+        ),
+    )
     conn.commit()
     conn.close()
 
@@ -333,7 +380,7 @@ def get_member(discord_id):
         SELECT discord_id, discord_tag, first_name, last_name, email, mobile,
                invite_sent_at, trial_start, trial_end, had_trial,
                paid_until, trial_reminder_sent_at, paid_reminder_sent_at,
-               used_promo, referrer_id, is_referrer, referral_paid, origin
+               used_promo, referrer_id, is_referrer, referral_paid, origin, discord_roles
         FROM members WHERE discord_id=?
     """, (str(discord_id),))
     row = c.fetchone()
