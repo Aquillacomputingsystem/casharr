@@ -16,6 +16,7 @@ from bot.tasks.enforce_access import enforce_access, sync_trial_durations
 from bot.tasks.audit_plex import audit_plex_access
 from bot.tasks.reminders import send_renewal_reminders
 from bot.tasks.maintenance import backup_database_daily, register_tasks as register_maintenance
+from bot.detail_requests import resume_pending_requests, handle_detail_response
 
 
 # ─────────────────────────────
@@ -100,6 +101,14 @@ async def on_ready():
     except Exception as e:
         tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         logger.error(f"❌ Slash command sync failed:\n{tb}")
+
+    # ─────────────────────────────
+    # Resume any pending detail DM flows
+    # ─────────────────────────────
+    try:
+        await resume_pending_requests()
+    except Exception as e:
+        logger.error("⚠️ Failed to resume pending detail requests: %s", e)
 
     # ─────────────────────────────
     # Start daily auto-backup after bot ready
@@ -235,3 +244,15 @@ async def on_member_join(member: discord.Member):
     except Exception as e:
         logger.error("⚠️ Onboarding failed for %s: %s", member.name, e)
         await send_admin(f"⚠️ Onboarding failed for {member.mention}: {type(e).__name__}: {e}")
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    """Handle DM replies for detail collection without timeouts."""
+    if message.author.bot:
+        return
+
+    if isinstance(message.channel, discord.DMChannel):
+        handled = await handle_detail_response(message)
+        if handled:
+            return

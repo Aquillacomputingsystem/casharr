@@ -51,32 +51,39 @@ def init_db():
             referrer_id TEXT,
             is_referrer INTEGER DEFAULT 0,
             referral_paid INTEGER DEFAULT 0,
-            origin TEXT DEFAULT NULL   -- 'invite' or 'sync'
+            origin TEXT DEFAULT NULL,   -- 'invite' or 'sync'
+            discord_roles TEXT DEFAULT NULL
         )
     """)
 
     # Add any missing columns automatically
     new_columns = [
         ("origin", "TEXT DEFAULT NULL"),
+        ("discord_roles", "TEXT DEFAULT NULL"),
     ]
     for col_name, col_def in new_columns:
         try:
             c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
         except Exception:
             pass
-    # Add any missing columns automatically
-    new_columns = [
-        ("referrer_id", "TEXT"),
-        ("is_referrer", "INTEGER DEFAULT 0"),
-        ("referral_paid", "INTEGER DEFAULT 0"),
-        ("origin", "TEXT DEFAULT NULL")
-    ]
-    for col_name, col_def in new_columns:
-        try:
-            c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
-        except Exception:
-            pass
-
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS detail_requests (
+            discord_id TEXT PRIMARY KEY,
+            step INTEGER NOT NULL DEFAULT 0,
+            first_name TEXT,
+            last_name TEXT,
+            email TEXT,
+            mobile TEXT,
+            intro_sent INTEGER NOT NULL DEFAULT 0,
+            origin TEXT,
+            roles TEXT,
+            discord_tag TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
     conn.commit()
     conn.close()
@@ -84,21 +91,175 @@ def init_db():
 # ─────────────────────────────
 # Member Operations
 # ─────────────────────────────
-def save_member(discord_id, first_name="", last_name="", email="", mobile="", discord_tag="", origin="invite"):
+def _connect_row():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def save_member(
+    discord_id,
+    first_name="",
+    last_name="",
+    email="",
+    mobile="",
+    discord_tag="",
+    origin="invite",
+    roles=None,
+):
     """Insert or update a member’s basic info."""
+
+    roles_value = None
+    if roles is not None:
+        if isinstance(roles, str):
+            roles_value = roles.strip()
+        else:
+            cleaned = []
+            for item in roles:
+                text = str(item).strip()
+                if text:
+                    cleaned.append(text)
+            roles_value = ", ".join(cleaned)
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO members (discord_id, discord_tag, first_name, last_name, email, mobile, origin)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+    c.execute(
+        """
+        INSERT INTO members (
+            discord_id,
+            discord_tag,
+            first_name,
+            last_name,
+            email,
+            mobile,
+            origin,
+            discord_roles
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             discord_tag=excluded.discord_tag,
             first_name=excluded.first_name,
             last_name=excluded.last_name,
             email=excluded.email,
             mobile=excluded.mobile,
-            origin=COALESCE(members.origin, excluded.origin)
-    """, (str(discord_id), discord_tag, first_name, last_name, email, mobile, origin))
+            origin=COALESCE(members.origin, excluded.origin),
+            discord_roles=COALESCE(excluded.discord_roles, members.discord_roles)
+    """,
+        (
+            str(discord_id),
+            discord_tag,
+            first_name,
+            last_name,
+            email,
+            mobile,
+            origin,
+            roles_value,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_detail_request(discord_id):
+    """Fetch a pending detail request record as a dict, or None."""
+    conn = _connect_row()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at FROM detail_requests WHERE discord_id=?",
+        (str(discord_id),),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_detail_requests():
+    """Return all pending detail request records."""
+    conn = _connect_row()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at FROM detail_requests"
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def save_detail_request_state(discord_id, **fields):
+    """Insert or update a pending detail request, returning the stored state."""
+    now = datetime.now(timezone.utc).isoformat()
+    existing = get_detail_request(discord_id)
+
+    state = {
+        "discord_id": str(discord_id),
+        "step": 0,
+        "first_name": "",
+        "last_name": "",
+        "email": "",
+        "mobile": "",
+        "intro_sent": 0,
+        "origin": "",
+        "roles": "",
+        "discord_tag": "",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    if existing:
+        state.update(existing)
+        state["created_at"] = existing.get("created_at") or now
+
+    for key, value in fields.items():
+        if key in state:
+            state[key] = value
+
+    state["updated_at"] = now
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO detail_requests (
+            discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(discord_id) DO UPDATE SET
+            step=excluded.step,
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            email=excluded.email,
+            mobile=excluded.mobile,
+            intro_sent=excluded.intro_sent,
+            origin=excluded.origin,
+            roles=excluded.roles,
+            discord_tag=excluded.discord_tag,
+            updated_at=excluded.updated_at
+        """,
+        (
+            state["discord_id"],
+            state["step"],
+            state["first_name"],
+            state["last_name"],
+            state["email"],
+            state["mobile"],
+            int(state["intro_sent"]),
+            state["origin"],
+            state["roles"],
+            state["discord_tag"],
+            state["created_at"],
+            state["updated_at"],
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return state
+
+
+def delete_detail_request(discord_id):
+    """Remove a pending detail request, if any."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM detail_requests WHERE discord_id=?", (str(discord_id),))
     conn.commit()
     conn.close()
 
@@ -333,7 +494,7 @@ def get_member(discord_id):
         SELECT discord_id, discord_tag, first_name, last_name, email, mobile,
                invite_sent_at, trial_start, trial_end, had_trial,
                paid_until, trial_reminder_sent_at, paid_reminder_sent_at,
-               used_promo, referrer_id, is_referrer, referral_paid, origin
+               used_promo, referrer_id, is_referrer, referral_paid, origin, discord_roles
         FROM members WHERE discord_id=?
     """, (str(discord_id),))
     row = c.fetchone()
