@@ -177,6 +177,10 @@ async def request_details(interaction: discord.Interaction):
         if member.bot:
             continue
 
+        # Skip admins — they don't need to be in the member detail workflow.
+        if admin_role and admin_role in member.roles:
+            continue
+
         record = get_member(member.id)
         if not _needs_contact(record):
             continue
