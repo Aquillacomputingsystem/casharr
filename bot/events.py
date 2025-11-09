@@ -6,8 +6,8 @@ import traceback
 from ipnserver import app
 from loghelper import logger
 from bot import (
-    bot, plex, WELCOME_MESSAGE, INITIAL_ROLE, TRIAL_DAYS,
-    send_admin, save_member, start_trial, check_and_upgrade_after_invite,
+    bot, plex, WELCOME_MESSAGE, INITIAL_ROLE,
+    send_admin, save_member, check_and_upgrade_after_invite,
     REMINDERS_ENABLED, config
 )
 from database import get_member, set_referrer
@@ -16,7 +16,12 @@ from bot.tasks.enforce_access import enforce_access, sync_trial_durations
 from bot.tasks.audit_plex import audit_plex_access
 from bot.tasks.reminders import send_renewal_reminders
 from bot.tasks.maintenance import backup_database_daily, register_tasks as register_maintenance
-from bot.detail_requests import resume_pending_requests, handle_detail_response
+from bot.detail_requests import (
+    resume_pending_requests,
+    handle_detail_response,
+    start_detail_request,
+    serialize_roles,
+)
 
 
 # ─────────────────────────────
@@ -189,61 +194,40 @@ async def on_member_join(member: discord.Member):
     # Onboard user via DM (new members only)
     # ─────────────────────────────
     try:
-        dm = await member.create_dm()
-        await dm.send(WELCOME_MESSAGE.format(user=member.name))
-        logger.info("💬 Sent welcome message to %s", member.name)
-
-        questions = [
-            "What is your **first name**?",
-            "What is your **last name**?",
-            "What is the **email you used for Plex**?",
-            "What is your **mobile number**?"
-        ]
-        answers = []
-
-        for q in questions:
-            await dm.send(q)
-
-            def check(m):
-                return m.author == member and isinstance(m.channel, discord.DMChannel)
-
-            msg = await bot.wait_for("message", check=check, timeout=300)
-            answers.append(msg.content.strip())
-
-        first, last, email, mobile = answers
         tag = f"{member.name}#{member.discriminator}" if member.discriminator else member.name
+        roles_snapshot = serialize_roles(member)
+        save_member(member.id, "", "", "", "", discord_tag=tag, origin="invite", roles=roles_snapshot)
 
-        save_member(member.id, first, last, email, mobile, discord_tag=tag)
-        logger.info("💾 Saved new member info for %s (email: %s)", member.name, email)
+        intro_message = (
+            WELCOME_MESSAGE.format(user=member.name)
+            + "\n\nPlease answer the next few questions so we can finish setting up your access."
+            + " Reply with `skip` to leave a field blank."
+        )
+        resume_message = (
+            "👋 Welcome back! We still need a few quick answers to finish activating your access."
+            " Reply here whenever you're ready."
+        )
 
-        # Referral acknowledgment
-        if referrer_id:
-            await dm.send(
-                "🎁 You joined via a referral invite! Your referrer will earn bonus days when you subscribe."
+        started = await start_detail_request(
+            member,
+            context="onboarding",
+            intro_message=intro_message,
+            resume_message=resume_message,
+            referrer_id=referrer_id,
+        )
+
+        if started:
+            logger.info("📝 Onboarding questionnaire started for %s", member.name)
+            await send_admin(f"📝 Started onboarding questionnaire for {member.mention}.")
+        else:
+            logger.warning("⚠️ Could not start onboarding questionnaire for %s", member.name)
+            await send_admin(
+                f"⚠️ Could not DM {member.mention} to collect onboarding details."
             )
 
-        # Plex Invite + Trial Setup
-        logger.info("📨 Inviting %s to Plex", email)
-        try:
-            plex.invite_user(email)
-        except Exception as e:
-            logger.warning("⚠️ Could not send Plex invite to %s: %s", email, e)
-
-        await asyncio.sleep(5)
-        await check_and_upgrade_after_invite(member, email)
-
-        logger.info("🧪 Starting %d-day trial for %s", TRIAL_DAYS, member.name)
-        start_trial(member.id, TRIAL_DAYS)
-
-        await dm.send("✅ Your details are saved and a Plex invite has been sent.")
-        await send_admin(f"🧪 Trial started for {member.mention} ({email}).")
-
-    except asyncio.TimeoutError:
-        logger.warning("⏳ %s did not answer onboarding questions in time.", member.name)
-        await send_admin(f"⚠️ {member.mention} did not complete onboarding questions.")
     except Exception as e:
-        logger.error("⚠️ Onboarding failed for %s: %s", member.name, e)
-        await send_admin(f"⚠️ Onboarding failed for {member.mention}: {type(e).__name__}: {e}")
+        logger.error("⚠️ Failed to start onboarding for %s: %s", member.name, e)
+        await send_admin(f"⚠️ Failed to start onboarding for {member.mention}: {type(e).__name__}: {e}")
 
 
 @bot.event

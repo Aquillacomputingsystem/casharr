@@ -82,11 +82,23 @@ def init_db():
             origin TEXT,
             roles TEXT,
             discord_tag TEXT,
+            context TEXT NOT NULL DEFAULT 'backfill',
+            referrer_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+
+    detail_columns = [
+        ("context", "TEXT NOT NULL DEFAULT 'backfill'"),
+        ("referrer_id", "TEXT"),
+    ]
+    for col_name, col_def in detail_columns:
+        try:
+            c.execute(f"ALTER TABLE detail_requests ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()
@@ -168,7 +180,7 @@ def get_detail_request(discord_id):
     conn = _connect_row()
     cur = conn.cursor()
     cur.execute(
-        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at FROM detail_requests WHERE discord_id=?",
+        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, context, referrer_id, created_at, updated_at FROM detail_requests WHERE discord_id=?",
         (str(discord_id),),
     )
     row = cur.fetchone()
@@ -181,7 +193,7 @@ def list_detail_requests():
     conn = _connect_row()
     cur = conn.cursor()
     cur.execute(
-        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at FROM detail_requests"
+        "SELECT discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, context, referrer_id, created_at, updated_at FROM detail_requests"
     )
     rows = cur.fetchall()
     conn.close()
@@ -204,6 +216,8 @@ def save_detail_request_state(discord_id, **fields):
         "origin": "",
         "roles": "",
         "discord_tag": "",
+        "context": "backfill",
+        "referrer_id": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -214,7 +228,12 @@ def save_detail_request_state(discord_id, **fields):
 
     for key, value in fields.items():
         if key in state:
-            state[key] = value
+            if key == "referrer_id":
+                state[key] = str(value).strip() if value is not None else ""
+            elif key == "context":
+                state[key] = str(value).strip() or "backfill"
+            else:
+                state[key] = value
 
     state["updated_at"] = now
 
@@ -223,9 +242,9 @@ def save_detail_request_state(discord_id, **fields):
     cur.execute(
         """
         INSERT INTO detail_requests (
-            discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, created_at, updated_at
+            discord_id, step, first_name, last_name, email, mobile, intro_sent, origin, roles, discord_tag, context, referrer_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             step=excluded.step,
             first_name=excluded.first_name,
@@ -236,6 +255,8 @@ def save_detail_request_state(discord_id, **fields):
             origin=excluded.origin,
             roles=excluded.roles,
             discord_tag=excluded.discord_tag,
+            context=excluded.context,
+            referrer_id=excluded.referrer_id,
             updated_at=excluded.updated_at
         """,
         (
@@ -249,6 +270,8 @@ def save_detail_request_state(discord_id, **fields):
             state["origin"],
             state["roles"],
             state["discord_tag"],
+            state["context"],
+            state["referrer_id"],
             state["created_at"],
             state["updated_at"],
         ),
