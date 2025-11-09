@@ -69,7 +69,7 @@ async def _collect_member_details(member: discord.Member) -> bool:
         await dm.send(prompt)
 
         try:
-            reply = await bot.wait_for("message", check=check, timeout=600)
+            reply = await bot.wait_for("message", check=check)
         except asyncio.TimeoutError:
             await dm.send("⏳ No worries — we’ll try again later. Feel free to DM an admin when you’re ready.")
             await send_admin(f"⏳ Timed out waiting for details from {member.mention}.")

@@ -1,0 +1,10 @@
+2025-11-09 12:31:16 [INFO] ──────────────────────────────────────────────
+2025-11-09 12:31:16 [INFO] 🪄 New session started: 2025-11-09_12-31-16
+2025-11-09 12:31:16 [INFO] ──────────────────────────────────────────────
+2025-11-09 12:31:24 [ERROR] ⚠️ Failed to connect to Plex: Unauthorized: (401) unauthorized; http://192.168.1.237:32400/ <html><head><script>window.location = window.location.href.match(/(^.+\/)[^\/]*$/)[1] + 'web/index.html';</script><title>Unauthorized</title></head><body><h1>401 Unauthorized</h1></body></html>
+2025-11-09 12:31:24 [WARNING] Continuing without active Plex connection. Some features will be limited.
+2025-11-09 12:31:24 [INFO] 🌐 Starting Casharr WebUI + IPN on http://0.0.0.0:5000
+2025-11-09 12:31:24 [INFO] 🤖 Launching Casharr Discord bot...
+2025-11-09 12:31:25 [ERROR] ⚠️ Discord failed to start: Improper token has been passed.
+2025-11-09 12:31:25 [WARNING] 🔸 Running in WebUI + IPN-only mode (Discord unavailable).
+2025-11-09 12:47:13 [INFO] 🛑 Casharr stopped manually.
