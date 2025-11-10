@@ -645,6 +645,129 @@ def api_member_delete(discord_id):
     except Exception:
         logger.exception("Failed to delete member %s", discord_id)
         return jsonify({"ok": False, "error": "Internal server error."}), 500
+    
+# ─────────────────────────────
+# Unified Messaging & PayLink API (Enhanced)
+# ─────────────────────────────
+@webui.route("/api/message/<target>", methods=["POST"])
+def api_message(target):
+    groups = data.get("groups", [])
+    """
+    Unified messaging endpoint for WebUI.
+    Sends messages through any enabled notification system (Discord, Email, SMS).
+    Target may be a single member's Discord ID or 'all' for broadcast.
+    """
+    import asyncio
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    from database import get_member, get_all_members
+    from bot import bot
+    import configparser, os
+
+    # ── Parse incoming data
+    data = request.get_json(silent=True) or {}
+    subject = data.get("subject", "Message from Casharr Admin").strip()
+    body = data.get("body", "").strip()
+    include_paylink = data.get("includePayLink", False)
+    use_discord = data.get("discord", False)
+    use_email = data.get("email", False)
+    use_sms = data.get("sms", False)
+
+    # ── Load configuration
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=True)
+    email_enabled = cfg.getboolean("SMTP", "Enabled", fallback=False)
+    sms_enabled = cfg.getboolean("SMS", "Enabled", fallback=False)
+
+    if not any([use_discord, use_email, use_sms]):
+        return jsonify({"ok": False, "error": "No channels selected."}), 400
+
+    # ── Retrieve target(s)
+    recipients = []
+    if target == "all":
+        recipients = get_all_members()
+    if groups:
+        recipients = [r for r in recipients if (r[11] or '').lower() in groups]
+
+    if not recipients:
+        return jsonify({"ok": False, "error": "No matching members found."}), 404
+
+    sent_summary = []
+    for member in recipients:
+        # Adapt to your DB schema
+        discord_id = member[0]
+        first_name = member[2] if len(member) > 2 else ""
+        last_name = member[3] if len(member) > 3 else ""
+        email = member[4] if len(member) > 4 else ""
+        mobile = member[5] if len(member) > 5 else ""
+
+        message_text = body
+        if include_paylink and paypal_base:
+            message_text += f"\n\n💳 Pay Now: {paypal_base}/{discord_id}"
+
+        sent_channels = []
+
+        # ───────────── Discord ─────────────
+        if discord_enabled and use_discord:
+            try:
+                member_obj = None
+                for g in bot.guilds:
+                    m_obj = g.get_member(int(discord_id))
+                    if m_obj:
+                        member_obj = m_obj
+                        break
+                if member_obj:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.send(f"**{subject}**\n\n{message_text}"), bot.loop
+                    )
+                    sent_channels.append("Discord")
+            except Exception as e:
+                print(f"⚠️ Discord DM failed for {discord_id}: {e}")
+
+        # ───────────── Email ─────────────
+        if email_enabled and use_email and email:
+            try:
+                send_email(subject, message_text, to=email)
+                sent_channels.append("Email")
+            except Exception as e:
+                print(f"⚠️ Email send failed for {email}: {e}")
+
+        # ───────────── SMS ─────────────
+        if sms_enabled and use_sms and mobile:
+            try:
+                send_sms(mobile, message_text)
+                sent_channels.append("SMS")
+            except Exception as e:
+                print(f"⚠️ SMS send failed for {mobile}: {e}")
+
+        if sent_channels:
+            sent_summary.append(
+                {"member": f"{first_name} {last_name}".strip() or discord_id, "channels": sent_channels}
+            )
+
+    print(f"📢 Sent {len(sent_summary)} messages via unified system.")
+    for s in sent_summary:
+        print(f" → {s['member']}: {', '.join(s['channels'])}")
+
+    return jsonify({
+        "ok": True,
+        "sent_count": len(sent_summary),
+        "sent_via": [s["channels"] for s in sent_summary],
+    })
+
+
+@webui.route("/api/paylink/<member_id>", methods=["GET"])
+def api_paylink(member_id):
+    """Return a personalized PayPal payment link."""
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    base_link = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
+    if not base_link:
+        return jsonify({"ok": False, "error": "PayPal PaymentBaseLink not set."}), 400
+    return jsonify({"ok": True, "link": f"{base_link}/{member_id}"})
 
 # ───────────────────────────────
 # Reports
