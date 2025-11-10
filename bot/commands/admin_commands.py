@@ -1,4 +1,3 @@
-# casharr/bot/commands/admin_commands.py
 import asyncio
 import discord, shutil, os, configparser, json
 from discord import app_commands
@@ -7,8 +6,181 @@ from bot import (
     bot, ADMIN_ROLE, INITIAL_ROLE, TRIAL_ROLE, PAYER_ROLE, LIFETIME_ROLE, send_admin,
     get_member, save_member, get_all_members, pay_page, DB_PATH, EXPORTS_DIR, plex, config
 )
-# ✅ NEW: Import promo helpers
 from database import is_promo_eligible, has_used_promo
+
+# ───────────────────────────────
+# Persistent pending DM tracking
+# ───────────────────────────────
+PENDING_FILE = "data/pending_details.json"
+os.makedirs("data", exist_ok=True)
+if not os.path.exists(PENDING_FILE):
+    with open(PENDING_FILE, "w") as f:
+        json.dump({}, f)
+
+def load_pending():
+    try:
+        with open(PENDING_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_pending(data):
+    with open(PENDING_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+def _serialize_roles(member: discord.Member) -> str:
+    return ", ".join(role.name for role in member.roles if role.name != "@everyone")
+
+def _needs_contact(record) -> bool:
+    if not record:
+        return True
+    for idx in (2, 3, 4, 5):  # first_name, last_name, email, mobile
+        value = record[idx] if len(record) > idx else None
+        if not value or not str(value).strip():
+            return True
+    return False
+
+
+async def _collect_member_details(member: discord.Member, resume_stage: int = 0):
+    """Interactively collect missing details from a member via DM (persistent)."""
+    record = get_member(member.id)
+    first = record[2] if record and len(record) > 2 else ""
+    last = record[3] if record and len(record) > 3 else ""
+    email = record[4] if record and len(record) > 4 else ""
+    mobile = record[5] if record and len(record) > 5 else ""
+
+    try:
+        dm = await member.create_dm()
+    except Exception as e:
+        await send_admin(f"⚠️ Couldn’t DM {member.mention} for details: {e}")
+        return False
+
+    await dm.send(
+        "👋 Thanks for helping update your Casharr profile."
+        "\nYou can reply anytime — this chat stays open until all details are received."
+        "\nReply with `skip` to keep any existing value."
+    )
+
+    def check(message: discord.Message) -> bool:
+        return message.author == member and isinstance(message.channel, discord.DMChannel)
+
+    questions = [
+        ("first_name", "What is your **first name**?", first),
+        ("last_name", "What is your **last name**?", last),
+        ("email", "What is the **email you use for Plex**?", email),
+        ("mobile", "What is your **mobile number**?", mobile),
+    ]
+    answers: dict[str, str] = {}
+
+    # Load pending progress
+    pending = load_pending()
+    stage = resume_stage
+    pending[str(member.id)] = stage
+    save_pending(pending)
+
+    while stage < len(questions):
+        key, question, current = questions[stage]
+        prompt = question
+        if current:
+            prompt += f"\nCurrent: `{current}`\nType `skip` to keep it."
+        else:
+            prompt += "\n(Type `skip` to leave blank.)"
+        await dm.send(prompt)
+
+        reply = await bot.wait_for("message", check=check)
+        response = reply.content.strip()
+        if response.lower() == "skip":
+            answers[key] = current or ""
+        else:
+            answers[key] = response
+
+        stage += 1
+        pending[str(member.id)] = stage
+        save_pending(pending)
+
+    cleaned_first = answers.get("first_name", first).strip()
+    cleaned_last = answers.get("last_name", last).strip()
+    cleaned_email = answers.get("email", email).strip()
+    cleaned_mobile = answers.get("mobile", mobile).strip()
+
+    tag = f"{member.name}#{member.discriminator}" if member.discriminator else member.name
+    origin = record[17] if record and len(record) > 17 and record[17] else "sync"
+    roles_snapshot = _serialize_roles(member)
+
+    save_member(
+        member.id,
+        cleaned_first,
+        cleaned_last,
+        cleaned_email,
+        cleaned_mobile,
+        discord_tag=tag,
+        origin=origin,
+        roles=roles_snapshot,
+    )
+
+    await dm.send("✅ Thanks! Your details have been updated and saved.")
+    await send_admin(f"✅ Saved updated details for {member.mention} ({cleaned_email or 'no email supplied'}).")
+
+    # Remove from pending
+    pending.pop(str(member.id), None)
+    save_pending(pending)
+    return True
+
+# ───────────────────────────────
+# /request_details (persistent)
+# ───────────────────────────────
+@bot.tree.command(name="request_details", description="Admins only: DM members to request missing details (persistent).")
+async def request_details(interaction: discord.Interaction):
+    admin_role = discord.utils.get(interaction.guild.roles, name=ADMIN_ROLE)
+    if admin_role not in interaction.user.roles:
+        await interaction.response.send_message("❌ You don’t have permission.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("📨 Checking for members missing details...", ephemeral=True)
+
+    started = 0
+    for member in interaction.guild.members:
+        if member.bot:
+            continue
+        if admin_role and admin_role in member.roles:
+            continue
+
+        record = get_member(member.id)
+        if not _needs_contact(record):
+            continue
+
+        tag = f"{member.name}#{member.discriminator}" if member.discriminator else member.name
+        origin = record[17] if record and len(record) > 17 and record[17] else "sync"
+        roles_snapshot = _serialize_roles(member)
+        existing_first = record[2] if record and len(record) > 2 else ""
+        existing_last = record[3] if record and len(record) > 3 else ""
+        existing_email = record[4] if record and len(record) > 4 else ""
+        existing_mobile = record[5] if record and len(record) > 5 else ""
+
+        save_member(
+            member.id,
+            existing_first,
+            existing_last,
+            existing_email,
+            existing_mobile,
+            discord_tag=tag,
+            origin=origin,
+            roles=roles_snapshot,
+        )
+
+        asyncio.create_task(_collect_member_details(member))
+        started += 1
+
+    if started == 0:
+        await interaction.followup.send("✅ Everyone already has full details on file.", ephemeral=True)
+        return
+
+    await interaction.followup.send(
+        f"✅ Started persistent detail collection with {started} member(s). They can reply anytime in DM.",
+        ephemeral=True,
+    )
+    await send_admin(f"📬 Persistent detail collection started for {started} member(s).")
+
 
 
 def _serialize_roles(member: discord.Member) -> str:
