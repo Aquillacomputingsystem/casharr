@@ -2,6 +2,7 @@ import os
 import sqlite3
 import configparser
 from datetime import datetime, timezone, timedelta
+import secrets
 
 # ─────────────────────────────
 # Database Path (Persistent)
@@ -73,6 +74,17 @@ def init_db():
         ("referral_paid", "INTEGER DEFAULT 0"),
         ("origin", "TEXT DEFAULT NULL"),
         ("discord_roles", "TEXT DEFAULT NULL"),
+    ]
+    for col_name, col_def in new_columns:
+        try:
+            c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
+
+    # ───── Onboarding columns ─────
+    new_columns = [
+        ("join_token", "TEXT"),
+        ("join_status", "TEXT DEFAULT 'pending'"),
     ]
     for col_name, col_def in new_columns:
         try:
@@ -388,6 +400,15 @@ def get_member(discord_id):
     return row
 
 
+def get_member_by_email(email: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM members WHERE lower(email)=lower(?)", (email,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
 def get_trial_members():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -526,6 +547,88 @@ def update_member_role(discord_id, role: str):
         return
 
     raise ValueError(f"Unsupported role '{role}'")
+
+def generate_join_token(discord_id: str) -> str:
+    """Generate or return existing onboarding token for a member."""
+    token = secrets.token_urlsafe(12)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE members SET join_token=?, join_status='pending' WHERE discord_id=?", (token, str(discord_id)))
+    if c.rowcount == 0:
+        c.execute("INSERT INTO members (discord_id, join_token, join_status) VALUES (?, ?, 'pending')",
+                  (str(discord_id), token))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_member_by_token(token: str):
+    """Look up a member record from its join token."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM members WHERE join_token=?", (token,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def generate_referral_token(referrer_id: str) -> str:
+    """Generate or reuse a referral token tied to an existing member."""
+    import secrets
+    token = secrets.token_urlsafe(12)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    # Verify the referrer exists
+    c.execute("SELECT discord_id FROM members WHERE discord_id=?", (str(referrer_id),))
+    if not c.fetchone():
+        conn.close()
+        raise ValueError(f"Referrer {referrer_id} not found in members table")
+
+    # Create new pending invite linked to the referrer
+    c.execute("""
+        INSERT INTO members (join_token, join_status, referrer_id)
+        VALUES (?, 'pending', ?)
+    """, (token, str(referrer_id)))
+    conn.commit()
+    conn.close()
+    return token
+
+def apply_referral_bonus(referrer_id: str, new_member_id: str, referral_cfg, trial_cfg):
+    """Apply referral rewards based on config.ini Referral & Trial sections."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    # Load base durations and bonuses
+    base_days = int(trial_cfg.get("durationdays", 30))
+    referral_bonus = int(referral_cfg.get("bonus1month", 7))  # Default fallback
+
+    try:
+        # 1️⃣ Extend the new member's trial
+        c.execute("SELECT trial_end FROM members WHERE discord_id=?", (new_member_id,))
+        row = c.fetchone()
+        if row and row[0]:
+            c.execute("UPDATE members SET trial_end = date(trial_end, ? || ' days') WHERE discord_id=?",
+                      (referral_bonus, new_member_id))
+        else:
+            c.execute("UPDATE members SET trial_end = date('now', ? || ' days') WHERE discord_id=?",
+                      (base_days + referral_bonus, new_member_id))
+
+        # 2️⃣ Extend the referrer's paid_until or trial_end
+        c.execute("SELECT paid_until, trial_end FROM members WHERE discord_id=?", (referrer_id,))
+        ref_row = c.fetchone()
+        if ref_row:
+            if ref_row[0]:
+                c.execute("UPDATE members SET paid_until = date(paid_until, ? || ' days') WHERE discord_id=?",
+                          (referral_bonus, referrer_id))
+            elif ref_row[1]:
+                c.execute("UPDATE members SET trial_end = date(trial_end, ? || ' days') WHERE discord_id=?",
+                          (referral_bonus, referrer_id))
+
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Referral bonus error: {e}")
+    finally:
+        conn.close()
 
 # ─────────────────────────────
 # Initialize Database

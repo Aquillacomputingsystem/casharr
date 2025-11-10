@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="referral">
+  <h2>🔗 Generate Your Casharr Referral</h2>
+  <form method="POST">
+    <label>Email (must match your registered address)</label>
+    <input type="email" name="email" required placeholder="you@example.com">
+    <button class="btn btn-primary">Generate Referral</button>
+  </form>
+  {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
+</section>
+{% endblock %}

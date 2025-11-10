@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="referral">
+  <h2>✅ Referral Ready!</h2>
+  <p>Share this link with your friend:</p>
+  <a href="{{ join_url }}" target="_blank">{{ join_url }}</a>
+  <p>or scan this QR:</p>
+  <img src="data:image/png;base64,{{ qr_b64 }}" alt="Referral QR" style="max-width:240px;">
+  <p><a href="/referral" class="btn">Generate Another</a></p>
+</section>
+{% endblock %}

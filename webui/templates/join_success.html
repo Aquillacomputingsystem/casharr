@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="join-success" style="text-align:center; padding:40px;">
+  <h2>🎉 Welcome to Casharr!</h2>
+  <p>Your setup is complete.</p>
+
+  <p>We’ve saved your details and activated your access.</p>
+  <br>
+  <a href="/" class="btn btn-primary">Return to Home</a>
+
+  {% if discord_enabled and discord_invite %}
+  <div style="margin-top:30px;">
+    <h3>Join our Discord Community</h3>
+    <a href="{{ discord_invite }}" target="_blank" class="btn">Join Discord</a>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

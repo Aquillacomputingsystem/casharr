@@ -95,15 +95,36 @@ def enforce_login_on_first_visit():
 @webui.route("/dashboard")
 def dashboard():
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
+    # make comparisons timezone-neutral
+    from datetime import datetime
+
+    def _to_naive(dt_str):
+        if not dt_str:
+            return None
+        try:
+            return datetime.fromisoformat(dt_str).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    now_naive = datetime.now().replace(tzinfo=None)
 
     total = len(rows)
-    active_trials = sum(1 for r in rows if r[8] and r[8] > "" and datetime.fromisoformat(r[8]) > now)
-    active_payers = sum(1 for r in rows if r[10] and r[10] > "" and datetime.fromisoformat(r[10]) > now)
+    active_trials = sum(
+        1 for r in rows
+        if r[8] and (te := _to_naive(r[8])) and te > now_naive
+    )
+    active_payers = sum(
+        1 for r in rows
+        if r[10] and (pu := _to_naive(r[10])) and pu > now_naive
+    )
     expired = sum(
         1 for r in rows
-        if ((r[8] and datetime.fromisoformat(r[8]) < now) or (r[10] and datetime.fromisoformat(r[10]) < now))
+        if (
+            (r[8] and (te := _to_naive(r[8])) and te < now_naive)
+            or (r[10] and (pu := _to_naive(r[10])) and pu < now_naive)
+        )
     )
+
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
@@ -525,6 +546,38 @@ async def _discord_set_role(discord_id: int, target_role: str):
     return {"ok": True}
 
 def _compute_status(row, member, guild):
+    import datetime as dtlib
+
+    def _to_naive(value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            try:
+                value = dtlib.datetime.fromisoformat(value)
+            except Exception:
+                return None
+        return value.replace(tzinfo=None)
+
+    paid_until = _to_naive(row[10] if len(row) > 10 else None)
+    trial_end  = _to_naive(row[8] if len(row) > 8 else None)
+    now_naive  = dtlib.datetime.now().replace(tzinfo=None)
+
+    # check Discord roles first
+    if guild and member:
+        init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(guild)
+        if life_r and life_r in member.roles:
+            return "Lifetime"
+        if payer_r and payer_r in member.roles:
+            return "Payer"
+        if trial_r and trial_r in member.roles:
+            return "Trial"
+
+    # fallback based on database fields
+    if paid_until and paid_until > now_naive:
+        return "Payer"
+    if trial_end and trial_end > now_naive:
+        return "Trial"
+    return "Expired"
     def parse_iso_safe(val):
         if not val: return None
         try: return datetime.fromisoformat(val)
@@ -548,69 +601,83 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
+    import datetime as dtlib  # move to top of function
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
     out = []
 
     def parse_iso_safe(val):
-        if not val: return None
-        try: return datetime.fromisoformat(val)
-        except Exception: return None
+        if not val:
+            return None
+        try:
+            return dtlib.datetime.fromisoformat(val)
+        except Exception:
+            return None
+
+    # timezone-safe comparison helpers
+    def _to_naive(value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            try:
+                value = dtlib.datetime.fromisoformat(value)
+            except Exception:
+                return None
+        return value.replace(tzinfo=None)
+
+    now_naive = dtlib.datetime.now().replace(tzinfo=None)
 
     for r in rows:
-        did = int(r[0])
+        # Safely handle missing or invalid Discord IDs
+        try:
+            did = int(r[0]) if r[0] else 0
+        except Exception:
+            did = 0
+
         guild, member = _find_member_across_guilds(did)
         role_display = "—"
         if guild and member:
             init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(guild)
-            if life_r and life_r in member.roles: role_display = LIFETIME_ROLE
-            elif payer_r and payer_r in member.roles: role_display = PAYER_ROLE
-            elif trial_r and trial_r in member.roles: role_display = TRIAL_ROLE
-            elif init_r and init_r in member.roles: role_display = INITIAL_ROLE
-            else: role_display = "No Access"
+            if life_r and life_r in member.roles:
+                role_display = LIFETIME_ROLE
+            elif payer_r and payer_r in member.roles:
+                role_display = PAYER_ROLE
+            elif trial_r and trial_r in member.roles:
+                role_display = TRIAL_ROLE
+            elif init_r and init_r in member.roles:
+                role_display = INITIAL_ROLE
+            else:
+                role_display = "No Access"
         else:
             paid_until = parse_iso_safe(r[10] if len(r) > 10 else None)
             trial_end = parse_iso_safe(r[8] if len(r) > 8 else None)
-            if paid_until and paid_until > now: role_display = PAYER_ROLE
-            elif trial_end and trial_end > now: role_display = TRIAL_ROLE
-            else: role_display = INITIAL_ROLE
+
+            pu = _to_naive(paid_until)
+            te = _to_naive(trial_end)
+
+            if pu and pu > now_naive:
+                role_display = PAYER_ROLE
+            elif te and te > now_naive:
+                role_display = TRIAL_ROLE
+            else:
+                role_display = INITIAL_ROLE
 
         status = _compute_status(r, member, (guild or (bot.guilds[0] if bot.guilds else None)))
         out.append({
-            "discord_id": r[0], "discord_tag": r[1], "first_name": r[2], "last_name": r[3],
-            "email": r[4], "mobile": r[5], "trial_end": r[8], "paid_until": r[10],
+            "discord_id": r[0] or "",
+            "discord_tag": r[1] or "",
+            "first_name": r[2] or "",
+            "last_name": r[3] or "",
+            "email": r[4] or "",
+            "mobile": r[5] or "",
+            "trial_end": r[8] or "",
+            "paid_until": r[10] or "",
             "referrer_id": r[14] if len(r) > 14 else None,
             "origin": r[17] if len(r) > 17 else None,
-            "discord_role": role_display, "status": status,
+            "discord_role": role_display,
+            "status": status,
         })
+
     return jsonify({"members": out})
-
-
-@webui.route("/api/member", methods=["POST"])
-def api_member_upsert():
-    payload = request.get_json(silent=True) or {}
-    discord_id = str(payload.get("discord_id", "")).strip()
-    if not discord_id:
-        return jsonify({"ok": False, "error": "Discord ID is required."}), 400
-
-    try:
-        add_or_update_member(
-            discord_id,
-            discord_tag=str(payload.get("discord_tag", "")).strip(),
-            first_name=str(payload.get("first_name", "")).strip(),
-            last_name=str(payload.get("last_name", "")).strip(),
-            email=str(payload.get("email", "")).strip(),
-            mobile=str(payload.get("mobile", "")).strip(),
-            origin="manual",
-        )
-        logger.info("Member %s saved via WebUI", discord_id)
-        return jsonify({"ok": True})
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        logger.exception("Failed to upsert member %s", discord_id)
-        return jsonify({"ok": False, "error": "Internal server error."}), 500
-
 
 @webui.route("/api/member/<discord_id>/role", methods=["POST"])
 def api_member_set_role(discord_id):
@@ -646,6 +713,157 @@ def api_member_delete(discord_id):
         logger.exception("Failed to delete member %s", discord_id)
         return jsonify({"ok": False, "error": "Internal server error."}), 500
     
+# ─────────────────────────────
+# API: Generate Invite / Onboarding Token
+# ─────────────────────────────
+@webui.route("/api/invite", methods=["POST"])
+def api_invite():
+    """Admin endpoint to create onboarding invite + return shareable link/QR."""
+    from database import generate_join_token, get_member
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    import secrets, qrcode, io, base64
+
+    data = request.get_json(silent=True) or {}
+    discord_id = str(data.get("discord_id", "")).strip() or secrets.token_hex(4)
+    email = str(data.get("email", "")).strip()
+    mobile = str(data.get("mobile", "")).strip()
+
+    token = generate_join_token(discord_id)
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+    join_url = f"{domain}/join/{token}"
+
+    # Generate QR as base64
+    qr = qrcode.QRCode(box_size=5, border=1)
+    qr.add_data(join_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+
+    subject = "You're invited to join Casharr!"
+    msg = f"Welcome!\nPlease complete your setup:\n{join_url}"
+
+    # Send notifications using existing systems
+    if email:
+        try:
+            send_email(subject, msg, to=email)
+        except Exception as e:
+            print(f"⚠️ Email invite failed: {e}")
+    if mobile:
+        try:
+            send_sms(mobile, msg)
+        except Exception as e:
+            print(f"⚠️ SMS invite failed: {e}")
+
+    return jsonify({"ok": True, "url": join_url, "qr_base64": qr_b64})
+
+# ─────────────────────────────
+# Public Onboarding Page
+# ─────────────────────────────
+# ─────────────────────────────
+# Public Onboarding Page (Referral-aware)
+# ─────────────────────────────
+@webui.route("/join/<token>", methods=["GET", "POST"])
+def join_page(token):
+    """Public onboarding page for invited or referred users."""
+    from database import get_member_by_token, save_member, apply_referral_bonus
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    import sqlite3
+
+    member = get_member_by_token(token)
+    if not member:
+        return "❌ Invalid or expired invite.", 404
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
+    discord_invite = cfg.get("Discord", "InviteLink", fallback="")
+    referral_cfg = cfg["Referral"] if cfg.has_section("Referral") else {}
+    trial_cfg = cfg["Trial"] if cfg.has_section("Trial") else {}
+
+    if request.method == "POST":
+        first = request.form.get("first_name", "").strip()
+        last = request.form.get("last_name", "").strip()
+        email = request.form.get("email", "").strip()
+        mobile = request.form.get("mobile", "").strip()
+        referrer_id = request.args.get("ref", "").strip()
+
+        save_member(member[0], first_name=first, last_name=last, email=email, mobile=mobile, origin="invite")
+
+        # Mark joined
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE members SET join_status='completed' WHERE join_token=?", (token,))
+        conn.commit()
+        conn.close()
+
+        # 🏆 Apply referral rewards if ref param + enabled
+        if cfg.getboolean("Referral", "enabled", fallback=False) and referrer_id:
+            apply_referral_bonus(referrer_id, member[0], referral_cfg, trial_cfg)
+
+            # Notify admin or referrer
+            msg = f"🎁 Referral Complete: {first} {last} joined via {referrer_id}. Bonus applied!"
+            try:
+                send_email("Referral Complete", msg, cfg.get("SMTP", "To", fallback=""))
+            except Exception as e:
+                print(f"⚠️ Email notify failed: {e}")
+            try:
+                send_sms(cfg.get("SMS", "TestNumber", fallback=""), msg)
+            except Exception as e:
+                print(f"⚠️ SMS notify failed: {e}")
+
+        return render_template("join_success.html", title="Welcome | Casharr")
+
+    return render_template("join.html",
+                           title="Join | Casharr",
+                           token=token,
+                           discord_enabled=discord_enabled,
+                           discord_invite=discord_invite)
+
+# ─────────────────────────────
+# Public Referral Portal
+# ─────────────────────────────
+@webui.route("/referral", methods=["GET", "POST"])
+def referral_portal():
+    """
+    Public page where existing members can enter their email and
+    receive a once-off referral QR / link for inviting friends.
+    """
+    from database import get_member_by_email, generate_referral_token
+    import qrcode, io, base64
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        member = get_member_by_email(email)
+        if not member:
+            return render_template("referral.html", error="Email not found in system.")
+
+        referrer_id = member[0]
+        token = generate_referral_token(referrer_id)
+
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+        domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+        join_url = f"{domain}/join/{token}?ref={referrer_id}"
+
+        # Build QR (base64)
+        qr = qrcode.QRCode(box_size=5, border=1)
+        qr.add_data(join_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        qr_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        return render_template("referral_success.html", join_url=join_url, qr_b64=qr_b64)
+
+    return render_template("referral.html")
+
 # ─────────────────────────────
 # Unified Messaging & PayLink API (Enhanced)
 # ─────────────────────────────
