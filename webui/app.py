@@ -285,7 +285,7 @@ def config_section(section):
         if section_key.lower() == "reminders":
             for key, value in form.items():
                 key_lower = key.lower()
-                if key_lower in ["enabled", "daysbeforeexpiry"]:
+                if key_lower in ["enabled", "daysbeforeexpiry", "notifydiscord", "notifyemail", "notifysms"]:
                     target = sections_lower.get("reminders")
                 elif key_lower in ["welcome", "trialreminder", "paidreminder"]:
                     target = sections_lower.get("messages")
@@ -392,6 +392,15 @@ def config_settings():
         cfg["SMTP"]["Pass"] = request.form.get("SMTPPass", "").strip()
         cfg["SMTP"]["To"] = request.form.get("SMTPTo", "").strip()
 
+        # SMS Gateway settings
+        if "SMS" not in cfg:
+            cfg["SMS"] = {}
+        cfg["SMS"]["Enabled"] = request.form.get("SMSEnabled", "false").lower()
+        cfg["SMS"]["GatewayURL"] = request.form.get("SMSGatewayURL", "").strip()
+        cfg["SMS"]["Token"] = request.form.get("SMSToken", "").strip()
+        cfg["SMS"]["From"] = request.form.get("SMSFrom", "Casharr").strip()
+
+
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             cfg.write(f)
         flash("✅ System settings updated successfully!", "success")
@@ -412,6 +421,11 @@ def config_settings():
     smtp_pass = cfg.get("SMTP", "Pass", fallback="")
     smtp_to = cfg.get("SMTP", "To", fallback="")
 
+    sms_enabled = cfg.getboolean("SMS", "Enabled", fallback=False)
+    sms_gateway = cfg.get("SMS", "GatewayURL", fallback="")
+    sms_token = cfg.get("SMS", "Token", fallback="")
+    sms_from = cfg.get("SMS", "From", fallback="Casharr")
+
     return render_template(
         "config_settings.html",
         title="Config | Settings",
@@ -427,7 +441,11 @@ def config_settings():
         smtp_server=smtp_server,
         smtp_user=smtp_user,
         smtp_pass=smtp_pass,
-        smtp_to=smtp_to
+        smtp_to=smtp_to,
+        sms_enabled=sms_enabled,
+        sms_gateway=sms_gateway,
+        sms_token=sms_token,
+        sms_from=sms_from
     )
 
 # ───────────────────────────────
@@ -1037,11 +1055,34 @@ def api_tasks_run():
 # ─────────────────────────────
 # SMTP Test Endpoint (plain text)
 # ─────────────────────────────
-@webui.route("/api/test_email", methods=["POST"])
+@webui.route("/apo/test_email", methods=["POST"])
 def api_test_email():
     try:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         send_email("Casharr SMTP Test", f"Casharr SMTP test successful at {now}.")
         return jsonify({"ok": True, "message": "Test email sent."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ─────────────────────────────
+# SMS Test Endpoint
+# ─────────────────────────────
+@webui.route("/api/test_sms", methods=["POST"])
+def api_test_sms():
+    try:
+        from helpers.sms import send_sms
+        CONFIG_PATH = os.path.join("config", "config.ini")
+        cfg = configparser.ConfigParser()
+        cfg.read(CONFIG_PATH, encoding="utf-8")
+        test_number = cfg.get("SMS", "TestNumber", fallback="").strip()
+
+        if not test_number:
+            return jsonify({"ok": False, "error": "No TestNumber configured in [SMS]."}), 400
+
+        success = send_sms(test_number, "Casharr SMS test successful ✅")
+        if not success:
+            return jsonify({"ok": False, "error": "SMS gateway did not respond or failed."}), 500
+
+        return jsonify({"ok": True, "message": "✅ Test SMS sent successfully."})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

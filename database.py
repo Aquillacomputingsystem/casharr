@@ -407,11 +407,15 @@ def get_payer_members():
 
 
 def get_all_for_reminders():
+    """Return all members eligible for trial or paid reminders."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        SELECT discord_id, email, trial_end, paid_until, trial_reminder_sent_at, paid_reminder_sent_at
+        SELECT discord_id, email, mobile, trial_end, paid_until,
+               trial_reminder_sent_at, paid_reminder_sent_at
         FROM members
+        WHERE (trial_end IS NOT NULL AND trial_end != '')
+           OR (paid_until IS NOT NULL AND paid_until != '')
     """)
     rows = c.fetchall()
     conn.close()
