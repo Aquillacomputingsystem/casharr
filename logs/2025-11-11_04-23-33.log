@@ -1,5 +1,0 @@
-2025-11-11 04:23:33 [INFO] ──────────────────────────────────────────────
-2025-11-11 04:23:33 [INFO] 🪄 New session started: 2025-11-11_04-23-33
-2025-11-11 04:23:33 [INFO] ──────────────────────────────────────────────
-2025-11-11 04:23:40 [ERROR] ⚠️ Failed to connect to Plex: Unauthorized: (401) unauthorized; http://192.168.1.237:32400/ <html><head><script>window.location = window.location.href.match(/(^.+\/)[^\/]*$/)[1] + 'web/index.html';</script><title>Unauthorized</title></head><body><h1>401 Unauthorized</h1></body></html>
-2025-11-11 04:23:40 [WARNING] Continuing without active Plex connection. Some features will be limited.

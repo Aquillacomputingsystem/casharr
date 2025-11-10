@@ -696,23 +696,106 @@ def api_member_set_role(discord_id):
         logger.exception("Failed to update role for %s", discord_id)
         return jsonify({"ok": False, "error": "Internal server error."}), 500
 
+    
+@webui.route("/api/member/<discord_id>", methods=["GET"])
+def api_member_get(discord_id):
+    """Return full member details for modal view."""
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+    fields = [
+        "discord_id","discord_tag","first_name","last_name","email",
+        "mobile","join_date","trial_start","trial_end","paid_until",
+        "role","referrer_id","origin","status"
+    ]
+    data = {fields[i]: member[i] if i < len(member) else None for i in range(len(fields))}
+    return jsonify({"ok": True, "member": data})
 
 @webui.route("/api/member/<discord_id>/delete", methods=["POST"])
 def api_member_delete(discord_id):
-    try:
+    """Remove a member from DB, Plex, and Discord (if enabled)."""
+    import asyncio
+    import configparser
+    import os
+    from plexhelper import PlexHelper
+    from database import delete_member, get_member
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    plex_enabled = cfg.getboolean("Plex", "Enabled", fallback=True)
+
+    # Email may be provided directly from frontend (in case member lookup fails)
+    email = request.form.get("email", "").strip() or None
+
+    # Try to load from DB if possible
+    member = get_member(discord_id) if discord_id not in ("", "None", None, "noid") else None
+
+    if member:
+        email = email or (member[4] if len(member) > 4 else None)
+        discord_tag = member[1] if len(member) > 1 else None
+        first_name = member[2] if len(member) > 2 else None
+        last_name = member[3] if len(member) > 3 else None
+    else:
+        discord_tag = first_name = last_name = None
+
+    removed = []
+    errors = []
+
+    # 1️⃣ Plex removal
+    if plex_enabled and email:
         try:
-            update_member_role(discord_id, "No Access")
-        except ValueError:
-            pass
-        removed = delete_member(discord_id)
-        if not removed:
-            return jsonify({"ok": False, "error": "Member not found."}), 404
-        logger.info("Removed member %s via WebUI", discord_id)
-        return jsonify({"ok": True})
-    except Exception:
-        logger.exception("Failed to delete member %s", discord_id)
-        return jsonify({"ok": False, "error": "Internal server error."}), 500
-    
+            plex_url = cfg.get("Plex", "BaseURL", fallback=None)
+            plex_token = cfg.get("Plex", "Token", fallback=None)
+            plex_libs = [l.strip() for l in cfg.get("Plex", "Libraries", fallback="Movies,TV").split(",")]
+            plex = PlexHelper(plex_url, plex_token, plex_libs)
+            plex.remove_user(email)
+            removed.append("Plex")
+            logger.info(f"✅ Removed {email} from Plex")
+        except Exception as e:
+            logger.warning(f"⚠️ Plex removal failed for {email}: {e}")
+            errors.append(f"Plex: {e}")
+
+    # 2️⃣ Discord removal
+    if discord_enabled and discord_id not in ("", "None", None, "noid"):
+        try:
+            import main as bot_main
+            loop = asyncio.get_event_loop()
+            for g in bot_main.bot.guilds:
+                member_obj = g.get_member(int(discord_id))
+                if member_obj:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.kick(reason="Removed via Casharr WebUI"), loop
+                    )
+                    removed.append("Discord")
+                    logger.info(f"✅ Kicked Discord user {member_obj.name} ({discord_id}) from {g.name}")
+                    break
+        except Exception as e:
+            logger.warning(f"⚠️ Discord removal failed for {discord_id}: {e}")
+            errors.append(f"Discord: {e}")
+
+    # 3️⃣ Database removal (always)
+    try:
+        deleted = delete_member(discord_id=discord_id, email=email)
+        if deleted:
+            removed.append("Database")
+            logger.info(f"✅ Removed from database ({discord_id or email})")
+        else:
+            logger.warning(f"⚠️ No DB record found for {discord_id or email}")
+    except Exception as e:
+        logger.exception(f"DB removal failed for {discord_id or email}")
+        errors.append(f"DB: {e}")
+
+    # 4️⃣ Response
+    summary = f"Removed {first_name or ''} {last_name or ''} ({email or 'N/A'}) from {', '.join(removed)}"
+    logger.info(summary)
+
+    if errors:
+        return jsonify({"ok": False, "error": '; '.join(errors), "removed": removed}), 500
+
+    return jsonify({"ok": True, "removed": removed})
+
 # ─────────────────────────────
 # API: Generate Invite / Onboarding Token
 # ─────────────────────────────

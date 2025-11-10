@@ -494,17 +494,30 @@ def add_or_update_member(
     )
 
 
-def delete_member(discord_id) -> bool:
-    """Remove a member by Discord ID. Returns True if a row was deleted."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM members WHERE discord_id = ?", (str(discord_id),))
-    deleted = c.rowcount
-    conn.commit()
-    conn.close()
-    return deleted > 0
+def delete_member(discord_id=None, email=None):
+    """
+    Forcefully remove a member record — by Discord ID, email, or both.
+    If both are missing, it deletes any placeholder or orphan rows with blank IDs/emails.
+    Returns True if any rows were deleted.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
 
+        # Try delete by Discord ID first (if valid)
+        if discord_id and discord_id not in ("", "None", None, "noid"):
+            c.execute("DELETE FROM members WHERE discord_id = ?", (discord_id,))
+        # Then try by email (if valid)
+        elif email and email not in ("", "None", None):
+            c.execute("DELETE FROM members WHERE email = ?", (email,))
+        # Fallback — delete orphans (no ID and no email)
+        else:
+            c.execute("DELETE FROM members WHERE (discord_id IS NULL OR discord_id = '' OR discord_id = 'noid') "
+                      "AND (email IS NULL OR email = '')")
 
+        conn.commit()
+        return c.rowcount > 0
+
+    
 def update_member_role(discord_id, role: str):
     """Update database state based on a human-readable role selection."""
     if not discord_id:
