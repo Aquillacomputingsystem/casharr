@@ -7,6 +7,8 @@
       <input id="searchInput" class="search" placeholder="Search name, email, or status…" />
       <button id="refreshBtn" class="btn">⟳ Refresh</button>
       <button id="addBtn" class="btn btn-primary">＋ Add / Update</button>
+      <button class="btn btn-sm btn-primary" onclick="openInviteModal()">Invite Member</button>
+      <button class="btn btn-sm btn-secondary" onclick="forceSyncAccess()">Force Re-check</button>
       <button id="dmAllBtn" class="btn">📢 DM All</button>
     </div>
   </div>
@@ -179,11 +181,20 @@ function renderRows(list){
       <td class="clickable-name">${m.first_name||'-'} ${m.last_name||''}</td>
       <td>${m.email||'-'}</td>
       <td>${m.mobile||'-'}</td>
-      <td>${statusPill(m.status)}</td>
+      <td>
+        <select class="status-select" data-id="${m.discord_id}">
+          <option value="Trial" ${m.status==='Trial'?'selected':''}>Trial</option>
+          <option value="Payer" ${m.status==='Payer'?'selected':''}>Payer</option>
+          <option value="Lifetime" ${m.status==='Lifetime'?'selected':''}>Lifetime</option>
+          <option value="Expired" ${m.status==='Expired'?'selected':''}>Expired</option>
+        </select>
+      </td>
       <td>${m.referrer_id||'-'}</td>
       <td><div class="action-bar">
         <button class="icon-btn js-view" title="View Details">👁️</button>
         <button class="icon-btn js-dm" title="Message">📩</button>
+        <button class="icon-btn js-paid" title="Mark Paid">💰</button>
+        <button class="icon-btn js-trial" title="Extend Trial">⏳</button>
         <button class="icon-btn js-remove danger" title="Remove">✖</button>
       </div></td>
     </tr>`).join('');
@@ -224,6 +235,10 @@ $save.addEventListener('click',async()=>{
 $body.addEventListener('click',e=>{
   const v=e.target.closest('.js-view');
   const dm=e.target.closest('.js-dm');
+  const paid = e.target.closest('.js-paid');
+  const trial = e.target.closest('.js-trial');
+  if (paid) return markPaid(id);
+  if (trial) return extendTrial(id);
   const del=e.target.closest('.js-remove');
   const tr=e.target.closest('tr');if(!tr)return;const id=tr.dataset.id;
   if(v)return openViewModal(id);
@@ -323,4 +338,96 @@ $dmAllBtn.addEventListener('click',()=>openDMModal('all','All Members'));
 
 loadMembers();
 </script>
+<!-- 📨 Invite Modal -->
+<div id="inviteModal" class="modal" style="display:none;">
+  <div class="modal-content" style="padding:20px;max-width:400px;">
+    <h3>Invite Member</h3>
+    <label>Email:</label><br>
+    <input id="inviteEmail" type="email" placeholder="user@example.com" style="width:100%;margin-bottom:8px;">
+    <label>Mobile:</label><br>
+    <input id="inviteMobile" type="text" placeholder="+61..." style="width:100%;margin-bottom:8px;">
+    <div style="margin-top:10px;text-align:right;">
+      <button onclick="sendInvite()">Send</button>
+      <button onclick="closeModal('inviteModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openInviteModal(){ document.getElementById('inviteModal').style.display='block'; }
+function closeModal(id){ document.getElementById(id).style.display='none'; }
+
+async function sendInvite(){
+  const email = document.getElementById('inviteEmail').value.trim();
+  const mobile = document.getElementById('inviteMobile').value.trim();
+  const res = await fetch('/api/invite', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, mobile})
+  });
+  const data = await res.json();
+  alert(data.ok ? '✅ Invite sent successfully!' : '❌ Error: ' + data.error);
+  closeModal('inviteModal');
+}
+
+async function forceSyncAccess(){
+  if(!confirm('Force Plex/Discord re-check?')) return;
+  const res = await fetch('/api/sync_access',{method:'POST'});
+  const data = await res.json();
+  alert(data.ok ? data.message : '❌ Error: ' + data.error);
+}
+async function markPaid(discordId){
+  if(!confirm("Mark this member as paid for 30 days?")) return;
+  const res=await fetch(`/api/member/${discordId}/mark_paid`,{method:'POST'});
+  const data=await res.json();
+  alert(data.ok ? "✅ " + data.message : "❌ " + data.error);
+  loadMembers();
+}
+
+async function extendTrial(discordId){
+  if(!confirm("Extend this member's trial by 7 days?")) return;
+  const res=await fetch(`/api/member/${discordId}/extend_trial`,{method:'POST'});
+  const data=await res.json();
+  alert(data.ok ? "✅ " + data.message : "❌ " + data.error);
+  loadMembers();
+}
+$body.addEventListener("change", async (e) => {
+  const select = e.target.closest(".status-select");
+  if (!select) return;
+
+  const id = select.dataset.id;
+  const newStatus = select.value;
+
+  if (!confirm(`Change this member's status to ${newStatus}?`)) {
+    loadMembers();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/member/${id}/set_status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    const data = await res.json();
+      if (data.ok) {
+        alert("✅ " + data.message);
+        // update UI instantly without reload
+        const row = document.querySelector(`tr[data-id="${id}"]`);
+        if (row) {
+          const cell = row.querySelector(".status-select");
+          if (cell) cell.value = newStatus;
+        }
+      } else {
+        alert("❌ " + data.error);
+      }
+      setTimeout(loadMembers, 1000);
+
+  } catch (err) {
+    alert("⚠️ Failed to update status: " + err.message);
+  }
+});
+
+</script>
+
 {% endblock %}
+

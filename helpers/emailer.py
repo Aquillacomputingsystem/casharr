@@ -25,3 +25,11 @@ def send_email(subject, body):
     with smtplib.SMTP_SSL(host, 465, context=ctx) as s:
         s.login(user, pw)
         s.send_message(msg)
+
+def send_bulk_emails(subject: str, message: str, recipients: list[str]):
+    """Send the same email to multiple recipients in one go."""
+    for email in recipients:
+        try:
+            send_email(subject, message, to=email)
+        except Exception as e:
+            print(f"⚠️ Bulk email failed for {email}: {e}")

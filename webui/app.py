@@ -601,33 +601,24 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
-    import datetime as dtlib  # move to top of function
+    """Return all members with consistent status (prefers DB column 'status')."""
+    from datetime import datetime, timezone
+    from database import get_all_members
+
     rows = get_all_members()
+    now = datetime.now(timezone.utc)
     out = []
 
     def parse_iso_safe(val):
         if not val:
             return None
         try:
-            return dtlib.datetime.fromisoformat(val)
+            return datetime.fromisoformat(val)
         except Exception:
             return None
 
-    # timezone-safe comparison helpers
-    def _to_naive(value):
-        if not value:
-            return None
-        if isinstance(value, str):
-            try:
-                value = dtlib.datetime.fromisoformat(value)
-            except Exception:
-                return None
-        return value.replace(tzinfo=None)
-
-    now_naive = dtlib.datetime.now().replace(tzinfo=None)
-
     for r in rows:
-        # Safely handle missing or invalid Discord IDs
+        # Safely handle missing Discord IDs
         try:
             did = int(r[0]) if r[0] else 0
         except Exception:
@@ -651,6 +642,19 @@ def api_members():
             paid_until = parse_iso_safe(r[10] if len(r) > 10 else None)
             trial_end = parse_iso_safe(r[8] if len(r) > 8 else None)
 
+            # timezone-safe comparison helpers
+            import datetime as dtlib
+            def _to_naive(value):
+                if not value:
+                    return None
+                if isinstance(value, str):
+                    try:
+                        value = dtlib.datetime.fromisoformat(value)
+                    except Exception:
+                        return None
+                return value.replace(tzinfo=None)
+
+            now_naive = dtlib.datetime.now().replace(tzinfo=None)
             pu = _to_naive(paid_until)
             te = _to_naive(trial_end)
 
@@ -661,7 +665,15 @@ def api_members():
             else:
                 role_display = INITIAL_ROLE
 
-        status = _compute_status(r, member, (guild or (bot.guilds[0] if bot.guilds else None)))
+        # 🟢 Prefer stored 'status' column if present (use last column dynamically)
+        try:
+            stored_status = r[-1] if len(r) >= 22 else None
+        except Exception:
+            stored_status = None
+
+        final_status = stored_status if stored_status else role_display
+        print(f"DEBUG: {r[0]} -> stored={stored_status}, fallback={role_display}")  # temporary
+
         out.append({
             "discord_id": r[0] or "",
             "discord_tag": r[1] or "",
@@ -674,7 +686,7 @@ def api_members():
             "referrer_id": r[14] if len(r) > 14 else None,
             "origin": r[17] if len(r) > 17 else None,
             "discord_role": role_display,
-            "status": status,
+            "status": final_status,  # unified display
         })
 
     return jsonify({"members": out})
@@ -1510,3 +1522,282 @@ def api_test_sms():
         return jsonify({"ok": True, "message": "✅ Test SMS sent successfully."})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ────────────────────────────────────────────────
+# 📩 INVITE MEMBER (Email/SMS + optional Discord)
+# ────────────────────────────────────────────────
+@webui.route("/api/invite", methods=["POST"])
+def api_invite_member():
+    """Invite a new member via Email/SMS (Discord optional)."""
+    from helpers.notify import send_notification
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    data = request.get_json(silent=True) or {}
+    email = data.get("email", "").strip()
+    mobile = data.get("mobile", "").strip()
+
+    if not email and not mobile:
+        return jsonify({"ok": False, "error": "Email or mobile required."}), 400
+
+    # ✅ Compose invite message
+    subject = "Welcome to Casharr 🎬"
+    message = (
+        "Hello!\n\n"
+        "You've been invited to join our Plex server.\n"
+        "Please click the link below to complete setup:\n\n"
+        f"{cfg.get('Web', 'BaseURL', fallback='http://localhost:5000')}/join\n\n"
+        "Thanks,\nCasharr Team"
+    )
+
+    # ✅ Send via all enabled channels
+    success = send_notification(
+        email=email if email else None,
+        mobile=mobile if mobile else None,
+        discord_member=None  # handled later if Discord enabled
+    )
+
+    # Optionally DM via Discord if enabled
+    if discord_enabled and email:
+        try:
+            import main as bot_main
+            import asyncio
+            loop = asyncio.get_event_loop()
+            # Attempt to find Discord member by email tag mapping (if available)
+            # Placeholder: extend with your own mapping logic later
+            logger.info(f"Discord invite (optional) queued for {email}")
+        except Exception as e:
+            logger.warning(f"Discord invite skipped: {e}")
+
+    # ✅ Add to DB if not already present
+    from database import add_or_update_member
+    add_or_update_member(
+        discord_id="",
+        discord_tag="",
+        first_name="",
+        last_name="",
+        email=email,
+        mobile=mobile,
+        origin="invite"
+    )
+
+    logger.info(f"Invite sent to {email or mobile}")
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# ⏳ Extend Trial
+# ---------------------------------------------------------------------------
+@webui.route("/api/member/<discord_id>/trial_extend", methods=["POST"])
+def api_extend_trial(discord_id):
+    """Extend a member's trial by X days."""
+    from datetime import datetime, timedelta
+    from database import get_member, add_or_update_member
+
+    data = request.get_json(force=True)
+    days = int(data.get("days", 7))
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+
+    trial_end = member[8]
+    new_date = (
+        datetime.fromisoformat(trial_end) + timedelta(days=days)
+        if trial_end else datetime.utcnow() + timedelta(days=days)
+    ).isoformat()
+
+    add_or_update_member(
+        discord_id,
+        first_name=member[2],
+        last_name=member[3],
+        email=member[4],
+        mobile=member[5],
+        trial_end=new_date,
+    )
+    return jsonify({"ok": True, "trial_end": new_date})
+
+
+# ---------------------------------------------------------------------------
+# 💰 Mark Paid
+# ---------------------------------------------------------------------------
+@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
+def api_mark_paid(discord_id):
+    """Mark a member as paid, update DB and optionally Discord."""
+    from datetime import datetime, timedelta
+    from database import get_member, add_or_update_member
+    data = request.get_json(force=True)
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+
+    paid_until = (datetime.utcnow() + timedelta(days=int(data.get("days", 30)))).isoformat()
+    add_or_update_member(
+        discord_id,
+        first_name=member[2],
+        last_name=member[3],
+        email=member[4],
+        mobile=member[5],
+        paid_until=paid_until,
+    )
+    return jsonify({"ok": True, "paid_until": paid_until})
+
+
+@webui.route("/api/sync_access", methods=["POST"])
+def api_sync_access():
+    """Trigger a full Plex/Discord access enforcement run."""
+    from bot.tasks import enforce_access
+    try:
+        enforce_access.run_enforcement()
+        return jsonify({"ok": True, "message": "Access sync completed"})
+    except Exception as e:
+        logger.exception("Access sync failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+    
+    # ───────────────────────────────
+# 💰 MARK MEMBER AS PAID
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
+def api_member_mark_paid(discord_id):
+    from database import update_paid_until
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    try:
+        new_date = update_paid_until(discord_id, 30)
+        logger.info(f"✅ Marked {discord_id} as paid until {new_date}")
+
+        # Optional Discord sync
+        if discord_enabled:
+            try:
+                import main as bot_main
+                import asyncio
+                loop = asyncio.get_event_loop()
+                for g in bot_main.bot.guilds:
+                    member = g.get_member(int(discord_id))
+                    if member:
+                        payer_role = discord.utils.get(g.roles, name="Payer")
+                        if payer_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.add_roles(payer_role, reason="Marked as paid via WebUI"), loop
+                            )
+            except Exception as e:
+                logger.warning(f"⚠️ Discord role sync failed: {e}")
+
+        return jsonify({"ok": True, "message": f"Member marked as paid until {new_date}."})
+    except Exception as e:
+        logger.exception("❌ Failed to mark paid")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ───────────────────────────────
+# ⏳ EXTEND MEMBER TRIAL
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/extend_trial", methods=["POST"])
+def api_member_extend_trial(discord_id):
+    from database import extend_trial
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    try:
+        new_date = extend_trial(discord_id, 7)
+        logger.info(f"⏳ Extended trial for {discord_id} until {new_date}")
+
+        # Optional Discord sync
+        if discord_enabled:
+            try:
+                import main as bot_main
+                import asyncio
+                loop = asyncio.get_event_loop()
+                for g in bot_main.bot.guilds:
+                    member = g.get_member(int(discord_id))
+                    if member:
+                        trial_role = discord.utils.get(g.roles, name="Trial")
+                        if trial_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.add_roles(trial_role, reason="Trial extended via WebUI"), loop
+                            )
+            except Exception as e:
+                logger.warning(f"⚠️ Discord role sync failed: {e}")
+
+        return jsonify({"ok": True, "message": f"Trial extended until {new_date}."})
+    except Exception as e:
+        logger.exception("❌ Failed to extend trial")
+        return jsonify({"ok": False, "error": str(e)}), 500
+    
+# ───────────────────────────────
+# 🏷️ TOGGLE MEMBER STATUS (Trial/Payer/Lifetime/Expired)
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/set_status", methods=["POST"])
+def api_member_set_status(discord_id):
+    """
+    Update a member's status (Trial / Payer / Lifetime / Expired)
+    and sync with Discord if enabled.
+    """
+    from database import update_member_status, get_member
+    import configparser, os, asyncio
+
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status", "").strip()
+    if not new_status:
+        return jsonify({"ok": False, "error": "No status provided."}), 400
+
+    # ✅ Update in the database
+    try:
+        update_member_status(discord_id, new_status)
+        logger.info(f"✅ Updated {discord_id} to status: {new_status}")
+    except Exception as e:
+        logger.exception("❌ Failed to set status")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # 🧠 Optional Discord sync (if enabled)
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    if discord_enabled and discord_id not in ("", "None", None):
+        try:
+            import main as bot_main
+            loop = asyncio.get_event_loop()
+            for g in bot_main.bot.guilds:
+                member_obj = g.get_member(int(discord_id))
+                if not member_obj:
+                    continue
+                init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(g)
+                target_role = None
+                # Determine correct role
+                if new_status.lower() == "trial":
+                    target_role = trial_r
+                elif new_status.lower() == "payer":
+                    target_role = payer_r
+                elif new_status.lower() == "lifetime":
+                    target_role = life_r
+                else:
+                    target_role = init_r
+                if target_role:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.add_roles(target_role, reason=f"WebUI set to {new_status}"),
+                        loop,
+                    )
+                # Remove conflicting roles
+                for role in [trial_r, payer_r, life_r, init_r]:
+                    if role and role != target_role and role in member_obj.roles:
+                        asyncio.run_coroutine_threadsafe(
+                            member_obj.remove_roles(role, reason=f"WebUI changed to {new_status}"),
+                            loop,
+                        )
+            logger.info(f"🪄 Synced Discord roles for {discord_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
+
+    return jsonify({"ok": True, "message": f"Status updated to {new_status}."})

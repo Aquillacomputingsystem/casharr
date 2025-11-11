@@ -40,3 +40,10 @@ def send_sms(to_number: str, message: str) -> bool:
         print(f"⚠️ SMS send failed: {e}")
         return False
 
+def send_bulk_sms(message: str, recipients: list[str]):
+    """Send the same SMS to multiple numbers."""
+    for mobile in recipients:
+        try:
+            send_sms(mobile, message)
+        except Exception as e:
+            print(f"⚠️ Bulk SMS failed for {mobile}: {e}")
