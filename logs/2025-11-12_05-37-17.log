@@ -1,0 +1,10 @@
+2025-11-12 05:37:17 [INFO] ──────────────────────────────────────────────
+2025-11-12 05:37:17 [INFO] 🪄 New session started: 2025-11-12_05-37-17
+2025-11-12 05:37:17 [INFO] ──────────────────────────────────────────────
+2025-11-12 05:37:27 [ERROR] ⚠️ Failed to connect to Plex: Unauthorized: (401) unauthorized; http://192.168.1.237:32400/ <html><head><script>window.location = window.location.href.match(/(^.+\/)[^\/]*$/)[1] + 'web/index.html';</script><title>Unauthorized</title></head><body><h1>401 Unauthorized</h1></body></html>
+2025-11-12 05:37:27 [WARNING] Continuing without active Plex connection. Some features will be limited.
+2025-11-12 05:37:27 [INFO] 🌐 Starting Casharr WebUI + IPN on http://0.0.0.0:5000
+2025-11-12 05:37:28 [ERROR] ⚠️ Discord failed to start: Command 'request_details' already registered.
+2025-11-12 05:37:28 [WARNING] 🔸 Running in WebUI + IPN-only mode (Discord unavailable).
+2025-11-12 05:40:14 [INFO] ✅ Updated None to status: Trial
+2025-11-12 05:41:40 [INFO] 🛑 Casharr stopped manually.

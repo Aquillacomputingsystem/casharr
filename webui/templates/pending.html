@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="config">
+  <h2>🧾 Pending Actions</h2>
+  <p class="desc">
+  {% if auto_mode %}
+    🔄 Auto-mode active — these entries are logged changes (no manual approval required).
+  {% else %}
+    🧾 Manual-mode active — review and approve pending access changes below.
+  {% endif %}
+</p>
+  <table class="task-table">
+    <tr><th>ID</th><th>User</th><th>Email</th><th>Proposed Status</th><th>Reason</th><th>Actions</th></tr>
+    {% for a in actions %}
+    <tr>
+      <td>{{ a[0] }}</td>
+      <td>{{ a[1] }}</td>
+      <td>{{ a[2] }}</td>
+      <td>{{ a[3] }}</td>
+      <td>{{ a[4] }}</td>
+      <td>
+        <form method="post" action="/api/pending/{{ a[0] }}/approve" style="display:inline">
+          <button class="btn btn-primary" type="submit">Approve</button>
+        </form>
+        <form method="post" action="/api/pending/{{ a[0] }}/deny" style="display:inline">
+          <button class="btn" type="submit">Reject</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

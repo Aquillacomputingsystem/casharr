@@ -21,6 +21,7 @@ from plexhelper import PlexHelper
 from helpers.emailer import send_email
 from loghelper import LOG_DIR, logger
 
+
 from database import (
     DB_PATH, get_all_members, get_member, save_member,
     start_trial, end_trial, add_or_update_member, delete_member,
@@ -95,15 +96,36 @@ def enforce_login_on_first_visit():
 @webui.route("/dashboard")
 def dashboard():
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
+    # make comparisons timezone-neutral
+    from datetime import datetime
+
+    def _to_naive(dt_str):
+        if not dt_str:
+            return None
+        try:
+            return datetime.fromisoformat(dt_str).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    now_naive = datetime.now().replace(tzinfo=None)
 
     total = len(rows)
-    active_trials = sum(1 for r in rows if r[8] and r[8] > "" and datetime.fromisoformat(r[8]) > now)
-    active_payers = sum(1 for r in rows if r[10] and r[10] > "" and datetime.fromisoformat(r[10]) > now)
+    active_trials = sum(
+        1 for r in rows
+        if r[8] and (te := _to_naive(r[8])) and te > now_naive
+    )
+    active_payers = sum(
+        1 for r in rows
+        if r[10] and (pu := _to_naive(r[10])) and pu > now_naive
+    )
     expired = sum(
         1 for r in rows
-        if ((r[8] and datetime.fromisoformat(r[8]) < now) or (r[10] and datetime.fromisoformat(r[10]) < now))
+        if (
+            (r[8] and (te := _to_naive(r[8])) and te < now_naive)
+            or (r[10] and (pu := _to_naive(r[10])) and pu < now_naive)
+        )
     )
+
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
@@ -133,16 +155,121 @@ def dashboard():
         access_mode=access_mode,
     )
 
+@webui.route("/pending")
+def view_pending():
+    """Display pending approval queue or movement log."""
+    import sqlite3
+    import configparser
+    from flask import render_template
+    import os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    auto_mode = not (cfg.get("AccessMode", "mode", fallback="Auto").strip().lower() == "manual")
+
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, discord_id, email, proposed_status, reason, detected_at
+        FROM pending_actions
+        ORDER BY detected_at DESC
+    """)
+    rows = c.fetchall()
+    conn.close()
+
+    return render_template("pending.html", actions=rows, auto_mode=auto_mode)
+    return render_template("pending.html", actions=rows, auto_mode=auto_mode)
+
+@webui.post("/api/pending/<int:action_id>/approve")
+def api_approve_pending(action_id: int):
+    """Approve a pending access change."""
+    import sqlite3, os
+    from flask import redirect
+    from database import update_member_status
+    from bot.discord_adapter import send_admin
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT discord_id, email, proposed_status FROM pending_actions WHERE id = ?",
+        (action_id,),
+    ).fetchone()
+
+    if row:
+        discord_id, email, new_status = row
+        update_member_status(discord_id or email, new_status)
+        send_admin(f"✅ Approved status change for {email or discord_id} → {new_status}")
+
+    c.execute("DELETE FROM pending_actions WHERE id = ?", (action_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/pending")
+
+
+@webui.post("/api/pending/<int:action_id>/deny")
+def api_deny_pending(action_id: int):
+    """Reject and remove a pending access change."""
+    import sqlite3, os
+    from flask import redirect
+    from bot.discord_adapter import send_admin
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT discord_id, email, proposed_status FROM pending_actions WHERE id = ?",
+        (action_id,),
+    ).fetchone()
+    conn.close()
+
+    if row:
+        discord_id, email, proposed_status = row
+        send_admin(f"❌ Denied pending change for {email or discord_id} ({proposed_status})")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM pending_actions WHERE id = ?", (action_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/pending")
+
+@webui.route("/api/logs/live")
+def api_logs_live():
+    try:
+        with open("logs/latest.log", "r", encoding="utf-8") as f:
+            tail = f.read()[-5000:]
+        return {"ok": True, "log": tail}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 # ───────────────────────────────
 # API: simple stats + logs
 # ───────────────────────────────
 @webui.route("/api/stats")
 def api_stats():
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
+    from datetime import datetime
+    now = datetime.now().replace(tzinfo=None)
     total = len(rows)
     active_trials = sum(1 for r in rows if r[8] and datetime.fromisoformat(r[8]) > now)
-    active_payers = sum(1 for r in rows if r[10] and datetime.fromisoformat(r[10]) > now)
+    active_payers = 0
+    for r in rows:
+        if not r[10]:
+            continue
+        try:
+            paid_until = datetime.fromisoformat(r[10])
+            # make both aware or both naive for comparison
+            if paid_until.tzinfo is None:
+                paid_until = paid_until.replace(tzinfo=timezone.utc)
+            if paid_until > now:
+                active_payers += 1
+        except Exception:
+            continue
     expired = sum(
         1 for r in rows
         if ((r[8] and datetime.fromisoformat(r[8]) < now) or (r[10] and datetime.fromisoformat(r[10]) < now))
@@ -285,7 +412,7 @@ def config_section(section):
         if section_key.lower() == "reminders":
             for key, value in form.items():
                 key_lower = key.lower()
-                if key_lower in ["enabled", "daysbeforeexpiry"]:
+                if key_lower in ["enabled", "daysbeforeexpiry", "notifydiscord", "notifyemail", "notifysms"]:
                     target = sections_lower.get("reminders")
                 elif key_lower in ["welcome", "trialreminder", "paidreminder"]:
                     target = sections_lower.get("messages")
@@ -392,6 +519,15 @@ def config_settings():
         cfg["SMTP"]["Pass"] = request.form.get("SMTPPass", "").strip()
         cfg["SMTP"]["To"] = request.form.get("SMTPTo", "").strip()
 
+        # SMS Gateway settings
+        if "SMS" not in cfg:
+            cfg["SMS"] = {}
+        cfg["SMS"]["Enabled"] = request.form.get("SMSEnabled", "false").lower()
+        cfg["SMS"]["GatewayURL"] = request.form.get("SMSGatewayURL", "").strip()
+        cfg["SMS"]["Token"] = request.form.get("SMSToken", "").strip()
+        cfg["SMS"]["From"] = request.form.get("SMSFrom", "Casharr").strip()
+
+
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             cfg.write(f)
         flash("✅ System settings updated successfully!", "success")
@@ -412,6 +548,11 @@ def config_settings():
     smtp_pass = cfg.get("SMTP", "Pass", fallback="")
     smtp_to = cfg.get("SMTP", "To", fallback="")
 
+    sms_enabled = cfg.getboolean("SMS", "Enabled", fallback=False)
+    sms_gateway = cfg.get("SMS", "GatewayURL", fallback="")
+    sms_token = cfg.get("SMS", "Token", fallback="")
+    sms_from = cfg.get("SMS", "From", fallback="Casharr")
+
     return render_template(
         "config_settings.html",
         title="Config | Settings",
@@ -427,7 +568,11 @@ def config_settings():
         smtp_server=smtp_server,
         smtp_user=smtp_user,
         smtp_pass=smtp_pass,
-        smtp_to=smtp_to
+        smtp_to=smtp_to,
+        sms_enabled=sms_enabled,
+        sms_gateway=sms_gateway,
+        sms_token=sms_token,
+        sms_from=sms_from
     )
 
 # ───────────────────────────────
@@ -443,6 +588,9 @@ def config_discord():
 
     if request.method == "POST":
         try:
+            # ✅ Toggle support
+            cfg["Discord"]["Enabled"] = "true" if request.form.get("Enabled") else "false"
+
             cfg["Discord"]["BotToken"] = request.form.get("BotToken", "").strip()
             cfg["Discord"]["AdminChannelID"] = request.form.get("AdminChannelID", "").strip()
             cfg["Discord"]["InitialRole"] = request.form.get("InitialRole", "").strip()
@@ -507,6 +655,38 @@ async def _discord_set_role(discord_id: int, target_role: str):
     return {"ok": True}
 
 def _compute_status(row, member, guild):
+    import datetime as dtlib
+
+    def _to_naive(value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            try:
+                value = dtlib.datetime.fromisoformat(value)
+            except Exception:
+                return None
+        return value.replace(tzinfo=None)
+
+    paid_until = _to_naive(row[10] if len(row) > 10 else None)
+    trial_end  = _to_naive(row[8] if len(row) > 8 else None)
+    now_naive  = dtlib.datetime.now().replace(tzinfo=None)
+
+    # check Discord roles first
+    if guild and member:
+        init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(guild)
+        if life_r and life_r in member.roles:
+            return "Lifetime"
+        if payer_r and payer_r in member.roles:
+            return "Payer"
+        if trial_r and trial_r in member.roles:
+            return "Trial"
+
+    # fallback based on database fields
+    if paid_until and paid_until > now_naive:
+        return "Payer"
+    if trial_end and trial_end > now_naive:
+        return "Trial"
+    return "Expired"
     def parse_iso_safe(val):
         if not val: return None
         try: return datetime.fromisoformat(val)
@@ -530,69 +710,95 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
+    """Return all members with consistent status (prefers DB column 'status')."""
+    from datetime import datetime, timezone
+    from database import get_all_members
+
     rows = get_all_members()
     now = datetime.now(timezone.utc)
     out = []
 
     def parse_iso_safe(val):
-        if not val: return None
-        try: return datetime.fromisoformat(val)
-        except Exception: return None
+        if not val:
+            return None
+        try:
+            return datetime.fromisoformat(val)
+        except Exception:
+            return None
 
     for r in rows:
-        did = int(r[0])
+        # Safely handle missing Discord IDs
+        try:
+            did = int(r[0]) if r[0] else 0
+        except Exception:
+            did = 0
+
         guild, member = _find_member_across_guilds(did)
         role_display = "—"
         if guild and member:
             init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(guild)
-            if life_r and life_r in member.roles: role_display = LIFETIME_ROLE
-            elif payer_r and payer_r in member.roles: role_display = PAYER_ROLE
-            elif trial_r and trial_r in member.roles: role_display = TRIAL_ROLE
-            elif init_r and init_r in member.roles: role_display = INITIAL_ROLE
-            else: role_display = "No Access"
+            if life_r and life_r in member.roles:
+                role_display = LIFETIME_ROLE
+            elif payer_r and payer_r in member.roles:
+                role_display = PAYER_ROLE
+            elif trial_r and trial_r in member.roles:
+                role_display = TRIAL_ROLE
+            elif init_r and init_r in member.roles:
+                role_display = INITIAL_ROLE
+            else:
+                role_display = "No Access"
         else:
             paid_until = parse_iso_safe(r[10] if len(r) > 10 else None)
             trial_end = parse_iso_safe(r[8] if len(r) > 8 else None)
-            if paid_until and paid_until > now: role_display = PAYER_ROLE
-            elif trial_end and trial_end > now: role_display = TRIAL_ROLE
-            else: role_display = INITIAL_ROLE
 
-        status = _compute_status(r, member, (guild or (bot.guilds[0] if bot.guilds else None)))
+            # timezone-safe comparison helpers
+            import datetime as dtlib
+            def _to_naive(value):
+                if not value:
+                    return None
+                if isinstance(value, str):
+                    try:
+                        value = dtlib.datetime.fromisoformat(value)
+                    except Exception:
+                        return None
+                return value.replace(tzinfo=None)
+
+            now_naive = dtlib.datetime.now().replace(tzinfo=None)
+            pu = _to_naive(paid_until)
+            te = _to_naive(trial_end)
+
+            if pu and pu > now_naive:
+                role_display = PAYER_ROLE
+            elif te and te > now_naive:
+                role_display = TRIAL_ROLE
+            else:
+                role_display = INITIAL_ROLE
+
+        # 🟢 Prefer stored 'status' column if present (use last column dynamically)
+        try:
+            stored_status = r[-1] if len(r) >= 22 else None
+        except Exception:
+            stored_status = None
+
+        final_status = stored_status if stored_status else role_display
+        print(f"DEBUG: {r[0]} -> stored={stored_status}, fallback={role_display}")  # temporary
+
         out.append({
-            "discord_id": r[0], "discord_tag": r[1], "first_name": r[2], "last_name": r[3],
-            "email": r[4], "mobile": r[5], "trial_end": r[8], "paid_until": r[10],
+            "discord_id": r[0] or "",
+            "discord_tag": r[1] or "",
+            "first_name": r[2] or "",
+            "last_name": r[3] or "",
+            "email": r[4] or "",
+            "mobile": r[5] or "",
+            "trial_end": r[8] or "",
+            "paid_until": r[10] or "",
             "referrer_id": r[14] if len(r) > 14 else None,
             "origin": r[17] if len(r) > 17 else None,
-            "discord_role": role_display, "status": status,
+            "discord_role": role_display,
+            "status": final_status,  # unified display
         })
+
     return jsonify({"members": out})
-
-
-@webui.route("/api/member", methods=["POST"])
-def api_member_upsert():
-    payload = request.get_json(silent=True) or {}
-    discord_id = str(payload.get("discord_id", "")).strip()
-    if not discord_id:
-        return jsonify({"ok": False, "error": "Discord ID is required."}), 400
-
-    try:
-        add_or_update_member(
-            discord_id,
-            discord_tag=str(payload.get("discord_tag", "")).strip(),
-            first_name=str(payload.get("first_name", "")).strip(),
-            last_name=str(payload.get("last_name", "")).strip(),
-            email=str(payload.get("email", "")).strip(),
-            mobile=str(payload.get("mobile", "")).strip(),
-            origin="manual",
-        )
-        logger.info("Member %s saved via WebUI", discord_id)
-        return jsonify({"ok": True})
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        logger.exception("Failed to upsert member %s", discord_id)
-        return jsonify({"ok": False, "error": "Internal server error."}), 500
-
 
 @webui.route("/api/member/<discord_id>/role", methods=["POST"])
 def api_member_set_role(discord_id):
@@ -611,22 +817,379 @@ def api_member_set_role(discord_id):
         logger.exception("Failed to update role for %s", discord_id)
         return jsonify({"ok": False, "error": "Internal server error."}), 500
 
+    
+@webui.route("/api/member/<discord_id>", methods=["GET"])
+def api_member_get(discord_id):
+    """Return full member details for modal view."""
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+    fields = [
+        "discord_id","discord_tag","first_name","last_name","email",
+        "mobile","join_date","trial_start","trial_end","paid_until",
+        "role","referrer_id","origin","status"
+    ]
+    data = {fields[i]: member[i] if i < len(member) else None for i in range(len(fields))}
+    return jsonify({"ok": True, "member": data})
 
 @webui.route("/api/member/<discord_id>/delete", methods=["POST"])
 def api_member_delete(discord_id):
-    try:
+    """Remove a member from DB, Plex, and Discord (if enabled)."""
+    import asyncio
+    import configparser
+    import os
+    from plexhelper import PlexHelper
+    from database import delete_member, get_member
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    plex_enabled = cfg.getboolean("Plex", "Enabled", fallback=True)
+
+    # Email may be provided directly from frontend (in case member lookup fails)
+    email = request.form.get("email", "").strip() or None
+
+    # Try to load from DB if possible
+    member = get_member(discord_id) if discord_id not in ("", "None", None, "noid") else None
+
+    if member:
+        email = email or (member[4] if len(member) > 4 else None)
+        discord_tag = member[1] if len(member) > 1 else None
+        first_name = member[2] if len(member) > 2 else None
+        last_name = member[3] if len(member) > 3 else None
+    else:
+        discord_tag = first_name = last_name = None
+
+    removed = []
+    errors = []
+
+    # 1️⃣ Plex removal
+    if plex_enabled and email:
         try:
-            update_member_role(discord_id, "No Access")
-        except ValueError:
-            pass
-        removed = delete_member(discord_id)
-        if not removed:
-            return jsonify({"ok": False, "error": "Member not found."}), 404
-        logger.info("Removed member %s via WebUI", discord_id)
-        return jsonify({"ok": True})
-    except Exception:
-        logger.exception("Failed to delete member %s", discord_id)
-        return jsonify({"ok": False, "error": "Internal server error."}), 500
+            plex_url = cfg.get("Plex", "BaseURL", fallback=None)
+            plex_token = cfg.get("Plex", "Token", fallback=None)
+            plex_libs = [l.strip() for l in cfg.get("Plex", "Libraries", fallback="Movies,TV").split(",")]
+            plex = PlexHelper(plex_url, plex_token, plex_libs)
+            plex.remove_user(email)
+            removed.append("Plex")
+            logger.info(f"✅ Removed {email} from Plex")
+        except Exception as e:
+            logger.warning(f"⚠️ Plex removal failed for {email}: {e}")
+            errors.append(f"Plex: {e}")
+
+    # 2️⃣ Discord removal
+    if discord_enabled and discord_id not in ("", "None", None, "noid"):
+        try:
+            import main as bot_main
+            loop = asyncio.get_event_loop()
+            for g in bot_main.bot.guilds:
+                member_obj = g.get_member(int(discord_id))
+                if member_obj:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.kick(reason="Removed via Casharr WebUI"), loop
+                    )
+                    removed.append("Discord")
+                    logger.info(f"✅ Kicked Discord user {member_obj.name} ({discord_id}) from {g.name}")
+                    break
+        except Exception as e:
+            logger.warning(f"⚠️ Discord removal failed for {discord_id}: {e}")
+            errors.append(f"Discord: {e}")
+
+    # 3️⃣ Database removal (always)
+    try:
+        deleted = delete_member(discord_id=discord_id, email=email)
+        if deleted:
+            removed.append("Database")
+            logger.info(f"✅ Removed from database ({discord_id or email})")
+        else:
+            logger.warning(f"⚠️ No DB record found for {discord_id or email}")
+    except Exception as e:
+        logger.exception(f"DB removal failed for {discord_id or email}")
+        errors.append(f"DB: {e}")
+
+    # 4️⃣ Response
+    summary = f"Removed {first_name or ''} {last_name or ''} ({email or 'N/A'}) from {', '.join(removed)}"
+    logger.info(summary)
+
+    if errors:
+        return jsonify({"ok": False, "error": '; '.join(errors), "removed": removed}), 500
+
+    return jsonify({"ok": True, "removed": removed})
+
+# ─────────────────────────────
+# API: Generate Invite / Onboarding Token
+# ─────────────────────────────
+@webui.route("/api/invite", methods=["POST"])
+def api_invite():
+    """Admin endpoint to create onboarding invite + return shareable link/QR."""
+    from database import generate_join_token, get_member
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    import secrets, qrcode, io, base64
+
+    data = request.get_json(silent=True) or {}
+    discord_id = str(data.get("discord_id", "")).strip() or secrets.token_hex(4)
+    email = str(data.get("email", "")).strip()
+    mobile = str(data.get("mobile", "")).strip()
+
+    token = generate_join_token(discord_id)
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+    join_url = f"{domain}/join/{token}"
+
+    # Generate QR as base64
+    qr = qrcode.QRCode(box_size=5, border=1)
+    qr.add_data(join_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+
+    subject = "You're invited to join Casharr!"
+    msg = f"Welcome!\nPlease complete your setup:\n{join_url}"
+
+    # Send notifications using existing systems
+    if email:
+        try:
+            send_email(subject, msg, to=email)
+        except Exception as e:
+            print(f"⚠️ Email invite failed: {e}")
+    if mobile:
+        try:
+            send_sms(mobile, msg)
+        except Exception as e:
+            print(f"⚠️ SMS invite failed: {e}")
+
+    return jsonify({"ok": True, "url": join_url, "qr_base64": qr_b64})
+
+# ─────────────────────────────
+# Public Onboarding Page
+# ─────────────────────────────
+# ─────────────────────────────
+# Public Onboarding Page (Referral-aware)
+# ─────────────────────────────
+@webui.route("/join/<token>", methods=["GET", "POST"])
+def join_page(token):
+    """Public onboarding page for invited or referred users."""
+    from database import get_member_by_token, save_member, apply_referral_bonus
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    import sqlite3
+
+    member = get_member_by_token(token)
+    if not member:
+        return "❌ Invalid or expired invite.", 404
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
+    discord_invite = cfg.get("Discord", "InviteLink", fallback="")
+    referral_cfg = cfg["Referral"] if cfg.has_section("Referral") else {}
+    trial_cfg = cfg["Trial"] if cfg.has_section("Trial") else {}
+
+    if request.method == "POST":
+        first = request.form.get("first_name", "").strip()
+        last = request.form.get("last_name", "").strip()
+        email = request.form.get("email", "").strip()
+        mobile = request.form.get("mobile", "").strip()
+        referrer_id = request.args.get("ref", "").strip()
+
+        save_member(member[0], first_name=first, last_name=last, email=email, mobile=mobile, origin="invite")
+
+        # Mark joined
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE members SET join_status='completed' WHERE join_token=?", (token,))
+        conn.commit()
+        conn.close()
+
+        # 🏆 Apply referral rewards if ref param + enabled
+        if cfg.getboolean("Referral", "enabled", fallback=False) and referrer_id:
+            apply_referral_bonus(referrer_id, member[0], referral_cfg, trial_cfg)
+
+            # Notify admin or referrer
+            msg = f"🎁 Referral Complete: {first} {last} joined via {referrer_id}. Bonus applied!"
+            try:
+                send_email("Referral Complete", msg, cfg.get("SMTP", "To", fallback=""))
+            except Exception as e:
+                print(f"⚠️ Email notify failed: {e}")
+            try:
+                send_sms(cfg.get("SMS", "TestNumber", fallback=""), msg)
+            except Exception as e:
+                print(f"⚠️ SMS notify failed: {e}")
+
+        return render_template("join_success.html", title="Welcome | Casharr")
+
+    return render_template("join.html",
+                           title="Join | Casharr",
+                           token=token,
+                           discord_enabled=discord_enabled,
+                           discord_invite=discord_invite)
+
+# ─────────────────────────────
+# Public Referral Portal
+# ─────────────────────────────
+@webui.route("/referral", methods=["GET", "POST"])
+def referral_portal():
+    """
+    Public page where existing members can enter their email and
+    receive a once-off referral QR / link for inviting friends.
+    """
+    from database import get_member_by_email, generate_referral_token
+    import qrcode, io, base64
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        member = get_member_by_email(email)
+        if not member:
+            return render_template("referral.html", error="Email not found in system.")
+
+        referrer_id = member[0]
+        token = generate_referral_token(referrer_id)
+
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+        domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+        join_url = f"{domain}/join/{token}?ref={referrer_id}"
+
+        # Build QR (base64)
+        qr = qrcode.QRCode(box_size=5, border=1)
+        qr.add_data(join_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        qr_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        return render_template("referral_success.html", join_url=join_url, qr_b64=qr_b64)
+
+    return render_template("referral.html")
+
+# ─────────────────────────────
+# Unified Messaging & PayLink API (Enhanced)
+# ─────────────────────────────
+@webui.route("/api/message/<target>", methods=["POST"])
+def api_message(target):
+    groups = data.get("groups", [])
+    """
+    Unified messaging endpoint for WebUI.
+    Sends messages through any enabled notification system (Discord, Email, SMS).
+    Target may be a single member's Discord ID or 'all' for broadcast.
+    """
+    import asyncio
+    from helpers.emailer import send_email
+    from helpers.sms import send_sms
+    from database import get_member, get_all_members
+    from bot import bot
+    import configparser, os
+
+    # ── Parse incoming data
+    data = request.get_json(silent=True) or {}
+    subject = data.get("subject", "Message from Casharr Admin").strip()
+    body = data.get("body", "").strip()
+    include_paylink = data.get("includePayLink", False)
+    use_discord = data.get("discord", False)
+    use_email = data.get("email", False)
+    use_sms = data.get("sms", False)
+
+    # ── Load configuration
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=True)
+    email_enabled = cfg.getboolean("SMTP", "Enabled", fallback=False)
+    sms_enabled = cfg.getboolean("SMS", "Enabled", fallback=False)
+
+    if not any([use_discord, use_email, use_sms]):
+        return jsonify({"ok": False, "error": "No channels selected."}), 400
+
+    # ── Retrieve target(s)
+    recipients = []
+    if target == "all":
+        recipients = get_all_members()
+    if groups:
+        recipients = [r for r in recipients if (r[11] or '').lower() in groups]
+
+    if not recipients:
+        return jsonify({"ok": False, "error": "No matching members found."}), 404
+
+    sent_summary = []
+    for member in recipients:
+        # Adapt to your DB schema
+        discord_id = member[0]
+        first_name = member[2] if len(member) > 2 else ""
+        last_name = member[3] if len(member) > 3 else ""
+        email = member[4] if len(member) > 4 else ""
+        mobile = member[5] if len(member) > 5 else ""
+
+        message_text = body
+        if include_paylink and paypal_base:
+            message_text += f"\n\n💳 Pay Now: {paypal_base}/{discord_id}"
+
+        sent_channels = []
+
+        # ───────────── Discord ─────────────
+        if discord_enabled and use_discord:
+            try:
+                member_obj = None
+                for g in bot.guilds:
+                    m_obj = g.get_member(int(discord_id))
+                    if m_obj:
+                        member_obj = m_obj
+                        break
+                if member_obj:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.send(f"**{subject}**\n\n{message_text}"), bot.loop
+                    )
+                    sent_channels.append("Discord")
+            except Exception as e:
+                print(f"⚠️ Discord DM failed for {discord_id}: {e}")
+
+        # ───────────── Email ─────────────
+        if email_enabled and use_email and email:
+            try:
+                send_email(subject, message_text, to=email)
+                sent_channels.append("Email")
+            except Exception as e:
+                print(f"⚠️ Email send failed for {email}: {e}")
+
+        # ───────────── SMS ─────────────
+        if sms_enabled and use_sms and mobile:
+            try:
+                send_sms(mobile, message_text)
+                sent_channels.append("SMS")
+            except Exception as e:
+                print(f"⚠️ SMS send failed for {mobile}: {e}")
+
+        if sent_channels:
+            sent_summary.append(
+                {"member": f"{first_name} {last_name}".strip() or discord_id, "channels": sent_channels}
+            )
+
+    print(f"📢 Sent {len(sent_summary)} messages via unified system.")
+    for s in sent_summary:
+        print(f" → {s['member']}: {', '.join(s['channels'])}")
+
+    return jsonify({
+        "ok": True,
+        "sent_count": len(sent_summary),
+        "sent_via": [s["channels"] for s in sent_summary],
+    })
+
+
+@webui.route("/api/paylink/<member_id>", methods=["GET"])
+def api_paylink(member_id):
+    """Return a personalized PayPal payment link."""
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    base_link = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
+    if not base_link:
+        return jsonify({"ok": False, "error": "PayPal PaymentBaseLink not set."}), 400
+    return jsonify({"ok": True, "link": f"{base_link}/{member_id}"})
 
 # ───────────────────────────────
 # Reports
@@ -1037,7 +1600,7 @@ def api_tasks_run():
 # ─────────────────────────────
 # SMTP Test Endpoint (plain text)
 # ─────────────────────────────
-@webui.route("/api/test_email", methods=["POST"])
+@webui.route("/apo/test_email", methods=["POST"])
 def api_test_email():
     try:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1045,3 +1608,305 @@ def api_test_email():
         return jsonify({"ok": True, "message": "Test email sent."})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+# ─────────────────────────────
+# SMS Test Endpoint
+# ─────────────────────────────
+@webui.route("/api/test_sms", methods=["POST"])
+def api_test_sms():
+    try:
+        from helpers.sms import send_sms
+        CONFIG_PATH = os.path.join("config", "config.ini")
+        cfg = configparser.ConfigParser()
+        cfg.read(CONFIG_PATH, encoding="utf-8")
+        test_number = cfg.get("SMS", "TestNumber", fallback="").strip()
+
+        if not test_number:
+            return jsonify({"ok": False, "error": "No TestNumber configured in [SMS]."}), 400
+
+        success = send_sms(test_number, "Casharr SMS test successful ✅")
+        if not success:
+            return jsonify({"ok": False, "error": "SMS gateway did not respond or failed."}), 500
+
+        return jsonify({"ok": True, "message": "✅ Test SMS sent successfully."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ────────────────────────────────────────────────
+# 📩 INVITE MEMBER (Email/SMS + optional Discord)
+# ────────────────────────────────────────────────
+@webui.route("/api/invite", methods=["POST"])
+def api_invite_member():
+    """Invite a new member via Email/SMS (Discord optional)."""
+    from helpers.notify import send_notification
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    data = request.get_json(silent=True) or {}
+    email = data.get("email", "").strip()
+    mobile = data.get("mobile", "").strip()
+
+    if not email and not mobile:
+        return jsonify({"ok": False, "error": "Email or mobile required."}), 400
+
+    # ✅ Compose invite message
+    subject = "Welcome to Casharr 🎬"
+    message = (
+        "Hello!\n\n"
+        "You've been invited to join our Plex server.\n"
+        "Please click the link below to complete setup:\n\n"
+        f"{cfg.get('Web', 'BaseURL', fallback='http://localhost:5000')}/join\n\n"
+        "Thanks,\nCasharr Team"
+    )
+
+    # ✅ Send via all enabled channels
+    success = send_notification(
+        email=email if email else None,
+        mobile=mobile if mobile else None,
+        discord_member=None  # handled later if Discord enabled
+    )
+
+    # Optionally DM via Discord if enabled
+    if discord_enabled and email:
+        try:
+            import main as bot_main
+            import asyncio
+            loop = asyncio.get_event_loop()
+            # Attempt to find Discord member by email tag mapping (if available)
+            # Placeholder: extend with your own mapping logic later
+            logger.info(f"Discord invite (optional) queued for {email}")
+        except Exception as e:
+            logger.warning(f"Discord invite skipped: {e}")
+
+    # ✅ Add to DB if not already present
+    from database import add_or_update_member
+    add_or_update_member(
+        discord_id="",
+        discord_tag="",
+        first_name="",
+        last_name="",
+        email=email,
+        mobile=mobile,
+        origin="invite"
+    )
+
+    logger.info(f"Invite sent to {email or mobile}")
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# ⏳ Extend Trial
+# ---------------------------------------------------------------------------
+@webui.route("/api/member/<discord_id>/trial_extend", methods=["POST"])
+def api_extend_trial(discord_id):
+    """Extend a member's trial by X days."""
+    from datetime import datetime, timedelta
+    from database import get_member, add_or_update_member
+
+    data = request.get_json(force=True)
+    days = int(data.get("days", 7))
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+
+    trial_end = member[8]
+    new_date = (
+        datetime.fromisoformat(trial_end) + timedelta(days=days)
+        if trial_end else datetime.utcnow() + timedelta(days=days)
+    ).isoformat()
+
+    add_or_update_member(
+        discord_id,
+        first_name=member[2],
+        last_name=member[3],
+        email=member[4],
+        mobile=member[5],
+        trial_end=new_date,
+    )
+    return jsonify({"ok": True, "trial_end": new_date})
+
+
+# ---------------------------------------------------------------------------
+# 💰 Mark Paid
+# ---------------------------------------------------------------------------
+@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
+def api_mark_paid(discord_id):
+    """Mark a member as paid, update DB and optionally Discord."""
+    from datetime import datetime, timedelta
+    from database import get_member, add_or_update_member
+    data = request.get_json(force=True)
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+
+    paid_until = (datetime.utcnow() + timedelta(days=int(data.get("days", 30)))).isoformat()
+    add_or_update_member(
+        discord_id,
+        first_name=member[2],
+        last_name=member[3],
+        email=member[4],
+        mobile=member[5],
+        paid_until=paid_until,
+    )
+    return jsonify({"ok": True, "paid_until": paid_until})
+
+
+@webui.route("/api/sync_access", methods=["POST"])
+def api_sync_access():
+    """Trigger a full Plex/Discord access enforcement run."""
+    from bot.tasks import enforce_access
+    try:
+        enforce_access.run_enforcement()
+        return jsonify({"ok": True, "message": "Access sync completed"})
+    except Exception as e:
+        logger.exception("Access sync failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+    
+    # ───────────────────────────────
+# 💰 MARK MEMBER AS PAID
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
+def api_member_mark_paid(discord_id):
+    from database import update_paid_until
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    try:
+        new_date = update_paid_until(discord_id, 30)
+        logger.info(f"✅ Marked {discord_id} as paid until {new_date}")
+
+        # Optional Discord sync
+        if discord_enabled:
+            try:
+                import main as bot_main
+                import asyncio
+                loop = asyncio.get_event_loop()
+                for g in bot_main.bot.guilds:
+                    member = g.get_member(int(discord_id))
+                    if member:
+                        payer_role = discord.utils.get(g.roles, name="Payer")
+                        if payer_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.add_roles(payer_role, reason="Marked as paid via WebUI"), loop
+                            )
+            except Exception as e:
+                logger.warning(f"⚠️ Discord role sync failed: {e}")
+
+        return jsonify({"ok": True, "message": f"Member marked as paid until {new_date}."})
+    except Exception as e:
+        logger.exception("❌ Failed to mark paid")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ───────────────────────────────
+# ⏳ EXTEND MEMBER TRIAL
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/extend_trial", methods=["POST"])
+def api_member_extend_trial(discord_id):
+    from database import extend_trial
+    import configparser, os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    try:
+        new_date = extend_trial(discord_id, 7)
+        logger.info(f"⏳ Extended trial for {discord_id} until {new_date}")
+
+        # Optional Discord sync
+        if discord_enabled:
+            try:
+                import main as bot_main
+                import asyncio
+                loop = asyncio.get_event_loop()
+                for g in bot_main.bot.guilds:
+                    member = g.get_member(int(discord_id))
+                    if member:
+                        trial_role = discord.utils.get(g.roles, name="Trial")
+                        if trial_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.add_roles(trial_role, reason="Trial extended via WebUI"), loop
+                            )
+            except Exception as e:
+                logger.warning(f"⚠️ Discord role sync failed: {e}")
+
+        return jsonify({"ok": True, "message": f"Trial extended until {new_date}."})
+    except Exception as e:
+        logger.exception("❌ Failed to extend trial")
+        return jsonify({"ok": False, "error": str(e)}), 500
+    
+# ───────────────────────────────
+# 🏷️ TOGGLE MEMBER STATUS (Trial/Payer/Lifetime/Expired)
+# ───────────────────────────────
+@webui.route("/api/member/<discord_id>/set_status", methods=["POST"])
+def api_member_set_status(discord_id):
+    """
+    Update a member's status (Trial / Payer / Lifetime / Expired)
+    and sync with Discord if enabled.
+    """
+    from database import update_member_status, get_member
+    import configparser, os, asyncio
+
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status", "").strip()
+    if not new_status:
+        return jsonify({"ok": False, "error": "No status provided."}), 400
+
+    # ✅ Update in the database
+    try:
+        update_member_status(discord_id, new_status)
+        logger.info(f"✅ Updated {discord_id} to status: {new_status}")
+    except Exception as e:
+        logger.exception("❌ Failed to set status")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # 🧠 Optional Discord sync (if enabled)
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+
+    if discord_enabled and discord_id not in ("", "None", None):
+        try:
+            import main as bot_main
+            loop = asyncio.get_event_loop()
+            for g in bot_main.bot.guilds:
+                member_obj = g.get_member(int(discord_id))
+                if not member_obj:
+                    continue
+                init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(g)
+                target_role = None
+                # Determine correct role
+                if new_status.lower() == "trial":
+                    target_role = trial_r
+                elif new_status.lower() == "payer":
+                    target_role = payer_r
+                elif new_status.lower() == "lifetime":
+                    target_role = life_r
+                else:
+                    target_role = init_r
+                if target_role:
+                    asyncio.run_coroutine_threadsafe(
+                        member_obj.add_roles(target_role, reason=f"WebUI set to {new_status}"),
+                        loop,
+                    )
+                # Remove conflicting roles
+                for role in [trial_r, payer_r, life_r, init_r]:
+                    if role and role != target_role and role in member_obj.roles:
+                        asyncio.run_coroutine_threadsafe(
+                            member_obj.remove_roles(role, reason=f"WebUI changed to {new_status}"),
+                            loop,
+                        )
+            logger.info(f"🪄 Synced Discord roles for {discord_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
+
+    return jsonify({"ok": True, "message": f"Status updated to {new_status}."})

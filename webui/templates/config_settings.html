@@ -96,6 +96,34 @@
       <p id="smtpResult" class="hint" style="margin-top:.5rem;"></p>
     </div>
 
+    <!-- ────── SMS GATEWAY SETTINGS ────── -->
+    <div class="config-section">
+      <h3>📱 SMS Gateway (Android or HTTP API)</h3>
+      <div class="form-grid">
+        <label>
+          <span>Enable SMS Notifications</span>
+          <select name="SMSEnabled">
+            <option value="true" {% if sms_enabled %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if not sms_enabled %}selected{% endif %}>Disabled</option>
+          </select>
+        </label>
+        <label>
+          <span>Gateway URL</span>
+          <input type="text" name="SMSGatewayURL" value="{{ sms_gateway }}" placeholder="http://192.168.1.100:8080/message">
+        </label>
+        <label>
+          <span>API Token</span>
+          <input type="text" name="SMSToken" value="{{ sms_token }}" placeholder="your_api_token">
+        </label>
+        <label>
+          <span>Sender Name</span>
+          <input type="text" name="SMSFrom" value="{{ sms_from }}" placeholder="Casharr">
+        </label>
+      </div>
+      <button type="button" class="btn" onclick="sendTestSMS()">📲 Send Test SMS</button>
+      <p id="smsResult" class="hint" style="margin-top:.5rem;"></p>
+    </div>
+    
     <!-- ────── ADDITIONAL OPTIONS ────── -->
     <div class="config-section">
       <h3>🧩 Other Settings</h3>

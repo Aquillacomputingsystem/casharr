@@ -1,4 +1,3 @@
-# casharr/bot/commands/admin_commands.py
 import asyncio
 import discord, shutil, os, configparser, json
 from discord import app_commands
@@ -7,20 +6,34 @@ from bot import (
     bot, ADMIN_ROLE, INITIAL_ROLE, TRIAL_ROLE, PAYER_ROLE, LIFETIME_ROLE, send_admin,
     get_member, save_member, get_all_members, pay_page, DB_PATH, EXPORTS_DIR, plex, config
 )
-# ✅ NEW: Import promo helpers
 from database import is_promo_eligible, has_used_promo
 
+# ───────────────────────────────
+# Persistent pending DM tracking
+# ───────────────────────────────
+PENDING_FILE = "data/pending_details.json"
+os.makedirs("data", exist_ok=True)
+if not os.path.exists(PENDING_FILE):
+    with open(PENDING_FILE, "w") as f:
+        json.dump({}, f)
+
+def load_pending():
+    try:
+        with open(PENDING_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_pending(data):
+    with open(PENDING_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 def _serialize_roles(member: discord.Member) -> str:
-    """Return a comma-separated snapshot of the member's roles (excluding @everyone)."""
     return ", ".join(role.name for role in member.roles if role.name != "@everyone")
 
-
 def _needs_contact(record) -> bool:
-    """Determine whether a database record is missing required contact info."""
     if not record:
         return True
-
     for idx in (2, 3, 4, 5):  # first_name, last_name, email, mobile
         value = record[idx] if len(record) > idx else None
         if not value or not str(value).strip():
@@ -28,8 +41,8 @@ def _needs_contact(record) -> bool:
     return False
 
 
-async def _collect_member_details(member: discord.Member) -> bool:
-    """Interactively collect missing details from a member via DM."""
+async def _collect_member_details(member: discord.Member, resume_stage: int = 0):
+    """Interactively collect missing details from a member via DM (persistent)."""
     record = get_member(member.id)
     first = record[2] if record and len(record) > 2 else ""
     last = record[3] if record and len(record) > 3 else ""
@@ -43,8 +56,9 @@ async def _collect_member_details(member: discord.Member) -> bool:
         return False
 
     await dm.send(
-        "👋 Thanks for helping us update your Casharr profile."
-        "\nPlease answer the next few questions. Reply with `skip` to keep the value we already have."
+        "👋 Thanks for helping update your Casharr profile."
+        "\nYou can reply anytime — this chat stays open until all details are received."
+        "\nReply with `skip` to keep any existing value."
     )
 
     def check(message: discord.Message) -> bool:
@@ -56,35 +70,38 @@ async def _collect_member_details(member: discord.Member) -> bool:
         ("email", "What is the **email you use for Plex**?", email),
         ("mobile", "What is your **mobile number**?", mobile),
     ]
-
     answers: dict[str, str] = {}
 
-    for key, question, current in questions:
+    # Load pending progress
+    pending = load_pending()
+    stage = resume_stage
+    pending[str(member.id)] = stage
+    save_pending(pending)
+
+    while stage < len(questions):
+        key, question, current = questions[stage]
         prompt = question
         if current:
-            prompt += f"\nCurrent value: `{current}`\nType `skip` to keep this value."
+            prompt += f"\nCurrent: `{current}`\nType `skip` to keep it."
         else:
-            prompt += "\n(Type `skip` to leave this blank.)"
-
+            prompt += "\n(Type `skip` to leave blank.)"
         await dm.send(prompt)
 
-        try:
-            reply = await bot.wait_for("message", check=check)
-        except asyncio.TimeoutError:
-            await dm.send("⏳ No worries — we’ll try again later. Feel free to DM an admin when you’re ready.")
-            await send_admin(f"⏳ Timed out waiting for details from {member.mention}.")
-            return False
-
+        reply = await bot.wait_for("message", check=check)
         response = reply.content.strip()
         if response.lower() == "skip":
             answers[key] = current or ""
         else:
             answers[key] = response
 
-    cleaned_first = answers["first_name"].strip()
-    cleaned_last = answers["last_name"].strip()
-    cleaned_email = answers["email"].strip()
-    cleaned_mobile = answers["mobile"].strip()
+        stage += 1
+        pending[str(member.id)] = stage
+        save_pending(pending)
+
+    cleaned_first = answers.get("first_name", first).strip()
+    cleaned_last = answers.get("last_name", last).strip()
+    cleaned_email = answers.get("email", email).strip()
+    cleaned_mobile = answers.get("mobile", mobile).strip()
 
     tag = f"{member.name}#{member.discriminator}" if member.discriminator else member.name
     origin = record[17] if record and len(record) > 17 and record[17] else "sync"
@@ -101,9 +118,14 @@ async def _collect_member_details(member: discord.Member) -> bool:
         roles=roles_snapshot,
     )
 
-    await dm.send("✅ Thanks! Your details have been updated.")
+    await dm.send("✅ Thanks! Your details have been updated and saved.")
     await send_admin(f"✅ Saved updated details for {member.mention} ({cleaned_email or 'no email supplied'}).")
+
+    # Remove from pending
+    pending.pop(str(member.id), None)
+    save_pending(pending)
     return True
+
 
 # ────────────────────────────────
 # /sync_members COMMAND

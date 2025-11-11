@@ -235,3 +235,19 @@ async def on_member_join(member: discord.Member):
     except Exception as e:
         logger.error("⚠️ Onboarding failed for %s: %s", member.name, e)
         await send_admin(f"⚠️ Onboarding failed for {member.mention}: {type(e).__name__}: {e}")
+try:
+    from bot.commands.admin_commands import load_pending, _collect_member_details
+except Exception:
+    pass  # prevent duplicate command registration
+
+@bot.event
+async def on_message(message: discord.Message):
+    """Handle late replies for persistent /request_details sessions."""
+    if message.author.bot or not isinstance(message.channel, discord.DMChannel):
+        return
+
+    pending = load_pending()
+    user_id = str(message.author.id)
+    if user_id in pending:
+        stage = pending[user_id]
+        await _collect_member_details(message.author, resume_stage=stage)

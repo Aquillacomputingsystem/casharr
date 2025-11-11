@@ -2,6 +2,7 @@ import os
 import sqlite3
 import configparser
 from datetime import datetime, timezone, timedelta
+import secrets
 
 # ─────────────────────────────
 # Database Path (Persistent)
@@ -80,6 +81,17 @@ def init_db():
         except Exception:
             pass
 
+    # ───── Onboarding columns ─────
+    new_columns = [
+        ("join_token", "TEXT"),
+        ("join_status", "TEXT DEFAULT 'pending'"),
+    ]
+    for col_name, col_def in new_columns:
+        try:
+            c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
+
 
     conn.commit()
     conn.close()
@@ -113,28 +125,44 @@ def save_member(
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        """
-        INSERT INTO members (
-            discord_id,
-            discord_tag,
-            first_name,
-            last_name,
-            email,
-            mobile,
-            origin,
-            discord_roles
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(discord_id) DO UPDATE SET
-            discord_tag=excluded.discord_tag,
-            first_name=excluded.first_name,
-            last_name=excluded.last_name,
-            email=excluded.email,
-            mobile=excluded.mobile,
-            origin=COALESCE(members.origin, excluded.origin),
-            discord_roles=COALESCE(excluded.discord_roles, members.discord_roles)
-    """,
+    # ─────────────────────────────
+    # Insert or update (match on Discord ID OR Email OR Mobile)
+    # ─────────────────────────────
+    existing = None
+    try:
+        c.execute("""
+            SELECT discord_id FROM members
+            WHERE discord_id=? OR (email IS NOT NULL AND email=?) OR (mobile IS NOT NULL AND mobile=?)
+        """, (str(discord_id), email, mobile))
+        existing = c.fetchone()
+    except Exception:
+        existing = None
+
+    if existing:
+        # Update existing record
+        c.execute("""
+            UPDATE members
+            SET
+                discord_tag=?,
+                first_name=?,
+                last_name=?,
+                email=?,
+                mobile=?,
+                origin=COALESCE(origin, ?),
+                discord_roles=COALESCE(?, discord_roles)
+            WHERE discord_id=? OR (email IS NOT NULL AND email=?) OR (mobile IS NOT NULL AND mobile=?)
+        """, (discord_tag, first_name, last_name, email, mobile, origin, roles_value,
+              str(discord_id), email, mobile))
+    else:
+        # Insert new record
+        c.execute("""
+            INSERT INTO members (
+                discord_id, discord_tag, first_name, last_name,
+                email, mobile, origin, discord_roles
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(discord_id), discord_tag, first_name, last_name,
+              email, mobile, origin, roles_value))
+
         (
             str(discord_id),
             discord_tag,
@@ -145,7 +173,6 @@ def save_member(
             origin,
             roles_value,
         ),
-    )
     conn.commit()
     conn.close()
 
@@ -388,6 +415,15 @@ def get_member(discord_id):
     return row
 
 
+def get_member_by_email(email: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM members WHERE lower(email)=lower(?)", (email,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
 def get_trial_members():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -407,11 +443,15 @@ def get_payer_members():
 
 
 def get_all_for_reminders():
+    """Return all members eligible for trial or paid reminders."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        SELECT discord_id, email, trial_end, paid_until, trial_reminder_sent_at, paid_reminder_sent_at
+        SELECT discord_id, email, mobile, trial_end, paid_until,
+               trial_reminder_sent_at, paid_reminder_sent_at
         FROM members
+        WHERE (trial_end IS NOT NULL AND trial_end != '')
+           OR (paid_until IS NOT NULL AND paid_until != '')
     """)
     rows = c.fetchall()
     conn.close()
@@ -469,17 +509,30 @@ def add_or_update_member(
     )
 
 
-def delete_member(discord_id) -> bool:
-    """Remove a member by Discord ID. Returns True if a row was deleted."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM members WHERE discord_id = ?", (str(discord_id),))
-    deleted = c.rowcount
-    conn.commit()
-    conn.close()
-    return deleted > 0
+def delete_member(discord_id=None, email=None):
+    """
+    Forcefully remove a member record — by Discord ID, email, or both.
+    If both are missing, it deletes any placeholder or orphan rows with blank IDs/emails.
+    Returns True if any rows were deleted.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
 
+        # Try delete by Discord ID first (if valid)
+        if discord_id and discord_id not in ("", "None", None, "noid"):
+            c.execute("DELETE FROM members WHERE discord_id = ?", (discord_id,))
+        # Then try by email (if valid)
+        elif email and email not in ("", "None", None):
+            c.execute("DELETE FROM members WHERE email = ?", (email,))
+        # Fallback — delete orphans (no ID and no email)
+        else:
+            c.execute("DELETE FROM members WHERE (discord_id IS NULL OR discord_id = '' OR discord_id = 'noid') "
+                      "AND (email IS NULL OR email = '')")
 
+        conn.commit()
+        return c.rowcount > 0
+
+    
 def update_member_role(discord_id, role: str):
     """Update database state based on a human-readable role selection."""
     if not discord_id:
@@ -523,7 +576,213 @@ def update_member_role(discord_id, role: str):
 
     raise ValueError(f"Unsupported role '{role}'")
 
+def generate_join_token(discord_id: str) -> str:
+    """Generate or return existing onboarding token for a member."""
+    token = secrets.token_urlsafe(12)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE members SET join_token=?, join_status='pending' WHERE discord_id=?", (token, str(discord_id)))
+    if c.rowcount == 0:
+        c.execute("INSERT INTO members (discord_id, join_token, join_status) VALUES (?, ?, 'pending')",
+                  (str(discord_id), token))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_member_by_token(token: str):
+    """Look up a member record from its join token."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM members WHERE join_token=?", (token,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def generate_referral_token(referrer_id: str) -> str:
+    """Generate or reuse a referral token tied to an existing member."""
+    import secrets
+    token = secrets.token_urlsafe(12)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    # Verify the referrer exists
+    c.execute("SELECT discord_id FROM members WHERE discord_id=?", (str(referrer_id),))
+    if not c.fetchone():
+        conn.close()
+        raise ValueError(f"Referrer {referrer_id} not found in members table")
+
+    # Create new pending invite linked to the referrer
+    c.execute("""
+        INSERT INTO members (join_token, join_status, referrer_id)
+        VALUES (?, 'pending', ?)
+    """, (token, str(referrer_id)))
+    conn.commit()
+    conn.close()
+    return token
+
+def apply_referral_bonus(referrer_id: str, new_member_id: str, referral_cfg, trial_cfg):
+    """Apply referral rewards based on config.ini Referral & Trial sections."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    # Load base durations and bonuses
+    base_days = int(trial_cfg.get("durationdays", 30))
+    referral_bonus = int(referral_cfg.get("bonus1month", 7))  # Default fallback
+
+    try:
+        # 1️⃣ Extend the new member's trial
+        c.execute("SELECT trial_end FROM members WHERE discord_id=?", (new_member_id,))
+        row = c.fetchone()
+        if row and row[0]:
+            c.execute("UPDATE members SET trial_end = date(trial_end, ? || ' days') WHERE discord_id=?",
+                      (referral_bonus, new_member_id))
+        else:
+            c.execute("UPDATE members SET trial_end = date('now', ? || ' days') WHERE discord_id=?",
+                      (base_days + referral_bonus, new_member_id))
+
+        # 2️⃣ Extend the referrer's paid_until or trial_end
+        c.execute("SELECT paid_until, trial_end FROM members WHERE discord_id=?", (referrer_id,))
+        ref_row = c.fetchone()
+        if ref_row:
+            if ref_row[0]:
+                c.execute("UPDATE members SET paid_until = date(paid_until, ? || ' days') WHERE discord_id=?",
+                          (referral_bonus, referrer_id))
+            elif ref_row[1]:
+                c.execute("UPDATE members SET trial_end = date(trial_end, ? || ' days') WHERE discord_id=?",
+                          (referral_bonus, referrer_id))
+
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Referral bonus error: {e}")
+    finally:
+        conn.close()
+
+# ───────────────────────────────
+# MARK PAID / EXTEND TRIAL HELPERS
+# ───────────────────────────────
+import sqlite3
+from datetime import datetime, timedelta
+
+def update_paid_until(discord_id: str, days: int = 30):
+    """Extend or set paid_until date for a member."""
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT paid_until FROM members WHERE discord_id = ?", (discord_id,))
+    row = cur.fetchone()
+    now = datetime.now()
+    new_date = now + timedelta(days=days)
+
+    if row and row[0]:
+        try:
+            current_date = datetime.fromisoformat(row[0])
+            if current_date > now:
+                new_date = current_date + timedelta(days=days)
+        except Exception:
+            pass
+
+    cur.execute("UPDATE members SET paid_until = ? WHERE discord_id = ?", (new_date.isoformat(), discord_id))
+    conn.commit()
+    conn.close()
+    return new_date.isoformat()
+
+
+def extend_trial(discord_id: str, days: int = 7):
+    """Extend or set trial_end date for a member."""
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT trial_end FROM members WHERE discord_id = ?", (discord_id,))
+    row = cur.fetchone()
+    now = datetime.now()
+    new_date = now + timedelta(days=days)
+
+    if row and row[0]:
+        try:
+            current_date = datetime.fromisoformat(row[0])
+            if current_date > now:
+                new_date = current_date + timedelta(days=days)
+        except Exception:
+            pass
+
+    cur.execute("UPDATE members SET trial_end = ? WHERE discord_id = ?", (new_date.isoformat(), discord_id))
+    conn.commit()
+    conn.close()
+    return new_date.isoformat()
+
+def update_member_status(discord_id: str, new_status: str):
+    """Update the status of a member (Trial, Payer, Lifetime, Expired)."""
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("UPDATE members SET status = ? WHERE discord_id = ?", (new_status, discord_id))
+    print(f"🟢 Updated {discord_id} to {new_status}")
+    conn.commit()
+    conn.close()
+    return True
+
+def ensure_schema():
+    """Ensure members table has all required columns and that pending_actions exists."""
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+
+    # ─────────────────────────────
+    # Ensure 'status' column exists in members
+    # ─────────────────────────────
+    c.execute("PRAGMA table_info(members);")
+    columns = [r[1] for r in c.fetchall()]
+    if "status" not in columns:
+        c.execute("ALTER TABLE members ADD COLUMN status TEXT DEFAULT 'Trial';")
+        conn.commit()
+        print("🆕 Added 'status' column to members table.")
+
+    # ─────────────────────────────
+    # Ensure 'pending_actions' table exists
+    # ─────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id TEXT,
+            email TEXT,
+            proposed_status TEXT,
+            reason TEXT,
+            detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def add_pending_action(discord_id, email, proposed_status, reason):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO pending_actions (discord_id, email, proposed_status, reason) VALUES (?, ?, ?, ?)",
+              (discord_id, email, proposed_status, reason))
+    conn.commit(); conn.close()
+
+def get_pending_actions():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, discord_id, email, proposed_status, reason, detected_at FROM pending_actions")
+    rows = c.fetchall(); conn.close()
+    return rows
+
+def resolve_pending_action(action_id, approve: bool):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if approve:
+        # Apply status update
+        row = c.execute("SELECT discord_id, proposed_status FROM pending_actions WHERE id=?", (action_id,)).fetchone()
+        if row:
+            update_member_role(row[0], row[1])
+    c.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
+    conn.commit(); conn.close()
+
 # ─────────────────────────────
 # Initialize Database
 # ─────────────────────────────
 init_db()
+ensure_schema()

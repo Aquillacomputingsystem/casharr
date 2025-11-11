@@ -30,6 +30,42 @@
       </div>
     </div>
 
+        <!-- ────── REMINDER DELIVERY OPTIONS ────── -->
+    <hr class="form-divider">
+
+    <div class="config-section">
+      <h3>📢 Reminder Delivery Channels</h3>
+      <div class="form-grid-2">
+        <label>
+          <span>Send via Discord DM</span>
+          <select name="NotifyDiscord">
+            <option value="true" {% if config.get('notifydiscord','true').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if config.get('notifydiscord','false').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          </select>
+          <small>Enable to send reminders through Discord DMs (requires bot enabled).</small>
+        </label>
+
+        <label>
+          <span>Send via Email</span>
+          <select name="NotifyEmail">
+            <option value="true" {% if config.get('notifyemail','true').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if config.get('notifyemail','false').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          </select>
+          <small>Enable to send reminders by email.</small>
+        </label>
+
+        <label>
+          <span>Send via SMS</span>
+          <select name="NotifySMS">
+            <option value="true" {% if config.get('notifysms','false').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+            <option value="false" {% if config.get('notifysms','false').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          </select>
+          <small>Enable to send reminders via your configured SMS gateway.</small>
+        </label>
+      </div>
+    </div>
+
+
     <hr class="form-divider">
 
     <!-- ────── MESSAGE TEMPLATES ────── -->

@@ -1,0 +1,93 @@
+# ─────────────────────────────
+# 🧩 Core App Exclusions
+# ─────────────────────────────
+# SQLite database + backups
+/data/
+/exports/
+
+# Log files (all runs)
+logs/
+*.log
+*.log.*
+
+# Config secrets (keep example only)
+config/config.ini
+!config/config.example.ini
+
+# ─────────────────────────────
+# 🧠 Python Specific
+# ─────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
+*.egg
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+
+# Byte-compiled + build artifacts
+build/
+dist/
+pip-wheel-metadata/
+
+# Cache + temp
+*.bak
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# ─────────────────────────────
+# 🌐 WebUI Assets
+# ─────────────────────────────
+# Compiled JS/CSS cache (if any)
+webui/__pycache__/
+webui/static/*.map
+webui/static/dist/
+webui/static/node_modules/
+node_modules/
+npm-debug.log*
+
+# ─────────────────────────────
+# ⚙️ Local/Deployment Files
+# ─────────────────────────────
+# Docker & environment overrides
+docker-compose.override.yml
+.env.local
+.env.dev
+.env.prod
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.code-workspace
+
+# System files
+*.bak
+*.old
+*.orig
+
+# ─────────────────────────────
+# 🧩 Optional (safe exclusions)
+# ─────────────────────────────
+# Email & SMS logs
+email_logs/
+sms_logs/
+
+# Cache from PayPal IPN tests
+ipn_debug.log

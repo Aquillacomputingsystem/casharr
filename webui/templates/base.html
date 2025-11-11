@@ -51,6 +51,15 @@
           <i data-lucide="users" class="nav__icon"></i>
           <span>Members</span>
         </a>
+
+        <a href="/pending">
+          <i data-lucide="inbox" class="nav__icon"></i>
+          <span>Pending</span>
+          {% if pending_count and pending_count > 0 %}
+            <span class="badge">{{ pending_count }}</span>
+          {% endif %}
+        </a>
+
         <a href="/reports">
           <i data-lucide="file-text" class="nav__icon"></i>
           <span>Reports</span>
@@ -127,6 +136,11 @@
             </a>
           </div>
         </div>
+                {% if g.get('config_changed') %}
+      <div class="alert warning">
+        ⚠️ Configuration changed — please restart Casharr to apply.
+      </div>
+      {% endif %}
       </nav>
 
       <!-- Sidebar footer with theme toggle -->
