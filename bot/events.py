@@ -235,7 +235,10 @@ async def on_member_join(member: discord.Member):
     except Exception as e:
         logger.error("⚠️ Onboarding failed for %s: %s", member.name, e)
         await send_admin(f"⚠️ Onboarding failed for {member.mention}: {type(e).__name__}: {e}")
-from bot.commands.admin_commands import load_pending, _collect_member_details
+try:
+    from bot.commands.admin_commands import load_pending, _collect_member_details
+except Exception:
+    pass  # prevent duplicate command registration
 
 @bot.event
 async def on_message(message: discord.Message):

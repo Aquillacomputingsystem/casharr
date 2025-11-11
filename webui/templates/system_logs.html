@@ -25,4 +25,14 @@
     {% endfor %}
   </div>
 </section>
+<script>
+async function updateLog() {
+  const res = await fetch('/api/logs/live');
+  const data = await res.json();
+  if (data.ok) {
+    document.querySelectorAll('.log-content')[0].textContent = data.log;
+  }
+}
+setInterval(updateLog, 5000);
+</script>
 {% endblock %}

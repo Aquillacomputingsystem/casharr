@@ -202,3 +202,18 @@ class PlexHelper:
             traceback.print_exc()
             self._discord_log(msg)
             return "failed"
+
+def list_users(self):
+    """Return all Plex users linked to the server."""
+    users = []
+    try:
+        for user in self.account.users():
+            if not user.email:
+                continue
+            users.append({
+                "email": user.email.lower().strip(),
+                "name": user.title or user.username or "Unknown"
+            })
+    except Exception as e:
+        print(f"⚠️ Failed to list Plex users: {e}")
+    return users

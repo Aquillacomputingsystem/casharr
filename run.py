@@ -1,48 +1,62 @@
-# run.py — stable combined launcher (resilient)
-import threading
-import sys
+# run.py — unified launcher for Casharr
+import threading, time, configparser, os
 from loghelper import logger
-from ipnserver import app  # unified Flask (IPN + WebUI)
+from ipnserver import app
 
-# ─────────────────────────────
-# Start Flask / WebUI + IPN
-# ─────────────────────────────
+# ───────────────────────────────
+# Load configuration
+# ───────────────────────────────
+cfg = configparser.ConfigParser()
+cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=True)
+discord_token = cfg.get("Discord", "BotToken", fallback="").strip()
+
+# ───────────────────────────────
+# Start Flask WebUI + IPN
+# ───────────────────────────────
 def start_flask():
-    """Start unified Casharr Flask server (WebUI + IPN)."""
     try:
         logger.info("🌐 Starting Casharr WebUI + IPN on http://0.0.0.0:5000")
         app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"⚠️ Flask WebUI/IPN failed to start: {e}")
 
-# Run Flask in background
 threading.Thread(target=start_flask, daemon=True, name="FlaskThread").start()
 
-# ─────────────────────────────
-# Discord bot — safe startup
-# ─────────────────────────────
-try:
-    from bot import client, TOKEN
-    # ✅ Force-load all bot modules (commands, events, tasks)
-    import bot.events
-    import bot.commands.user_commands
-    import bot.commands.admin_commands
-    import bot.commands.reports
-    import bot.tasks.enforce_access
-    import bot.tasks.audit_plex
-    import bot.tasks.reminders
-
-    logger.info("🤖 Launching Casharr Discord bot...")
-    client.run(TOKEN)
-
-except Exception as e:
-    logger.error(f"⚠️ Discord failed to start: {e}")
-    logger.warning("🔸 Running in WebUI + IPN-only mode (Discord unavailable).")
-
-    # Keep alive so Flask/IPN continue running even if Discord fails
+# ───────────────────────────────
+# Optional Discord Bot
+# ───────────────────────────────
+if discord_enabled and discord_token:
     try:
-        while True:
-            pass
-    except KeyboardInterrupt:
-        logger.info("🛑 Casharr stopped manually.")
-        sys.exit(0)
+        from bot import client
+        import bot.events
+        import bot.commands.user_commands
+        import bot.commands.admin_commands
+        import bot.commands.reports
+        import bot.tasks.enforce_access
+        import bot.tasks.audit_plex
+        import bot.tasks.reminders
+
+        logger.info("🤖 Launching Casharr Discord bot...")
+        try:
+            client.run(discord_token)
+        except Exception as login_error:
+            logger.error(f"⚠️ Discord login failed: {login_error}")
+            logger.warning("🔸 Continuing without Discord (WebUI + IPN active).")
+
+    except Exception as import_error:
+        logger.error(f"⚠️ Discord failed to start: {import_error}")
+        logger.warning("🔸 Continuing without Discord (WebUI + IPN active).")
+
+else:
+    logger.info("🤖 Discord disabled or missing token — running WebUI/IPN only.")
+
+# ───────────────────────────────
+# Keep main thread alive
+# ───────────────────────────────
+try:
+    while True:
+        time.sleep(60)
+except KeyboardInterrupt:
+    logger.info("🛑 Shutting down Casharr...")

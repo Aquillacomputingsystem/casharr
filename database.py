@@ -725,19 +725,61 @@ def update_member_status(discord_id: str, new_status: str):
     return True
 
 def ensure_schema():
-    """Ensure members table has all required columns."""
+    """Ensure members table has all required columns and that pending_actions exists."""
     db_path = os.path.join("data", "members.db")
     conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
+    c = conn.cursor()
 
-    # Add 'status' column if missing
-    cur.execute("PRAGMA table_info(members);")
-    columns = [r[1] for r in cur.fetchall()]
+    # ─────────────────────────────
+    # Ensure 'status' column exists in members
+    # ─────────────────────────────
+    c.execute("PRAGMA table_info(members);")
+    columns = [r[1] for r in c.fetchall()]
     if "status" not in columns:
-        cur.execute("ALTER TABLE members ADD COLUMN status TEXT DEFAULT 'Trial';")
+        c.execute("ALTER TABLE members ADD COLUMN status TEXT DEFAULT 'Trial';")
         conn.commit()
+        print("🆕 Added 'status' column to members table.")
 
+    # ─────────────────────────────
+    # Ensure 'pending_actions' table exists
+    # ─────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id TEXT,
+            email TEXT,
+            proposed_status TEXT,
+            reason TEXT,
+            detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
     conn.close()
+
+def add_pending_action(discord_id, email, proposed_status, reason):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO pending_actions (discord_id, email, proposed_status, reason) VALUES (?, ?, ?, ?)",
+              (discord_id, email, proposed_status, reason))
+    conn.commit(); conn.close()
+
+def get_pending_actions():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, discord_id, email, proposed_status, reason, detected_at FROM pending_actions")
+    rows = c.fetchall(); conn.close()
+    return rows
+
+def resolve_pending_action(action_id, approve: bool):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if approve:
+        # Apply status update
+        row = c.execute("SELECT discord_id, proposed_status FROM pending_actions WHERE id=?", (action_id,)).fetchone()
+        if row:
+            update_member_role(row[0], row[1])
+    c.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
+    conn.commit(); conn.close()
 
 # ─────────────────────────────
 # Initialize Database

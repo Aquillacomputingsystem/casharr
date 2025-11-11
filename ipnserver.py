@@ -1,11 +1,12 @@
 # ipnserver.py
-from flask import Flask, request
+from flask import Flask, request, redirect
 import discord
 import requests, os, configparser, asyncio, json, sqlite3
 from datetime import datetime, timezone, timedelta
 import psutil
 import time
 from bot import bot, plex
+from webui.scheduler import scheduler  # ensures background loop starts
 
 APP_START = time.time()
 
@@ -27,6 +28,8 @@ from webui.app import webui
 # Flask application
 # ────────────────────────────────
 app = Flask(__name__)
+logger_msg = "🧠 WebUI Scheduler initialized (background tasks running)."
+print(logger_msg)
 app.register_blueprint(webui)   # ✅ register blueprint once
 import os
 app.secret_key = os.environ.get("CASHARR_SECRET", os.urandom(24))
@@ -38,6 +41,9 @@ app.secret_key = os.environ.get("CASHARR_SECRET", os.urandom(24))
 CONFIG_PATH = os.path.join("config", "config.ini")
 config = configparser.ConfigParser()
 config.read(CONFIG_PATH, encoding="utf-8")
+# Discord enable flag
+# ───────────────────────────────
+DISCORD_ENABLED = config.getboolean("Discord", "Enabled", fallback=True)
 
 DOMAIN = config["Site"].get("Domain", "").rstrip("/")
 PAYPAL_MODE = config["PayPal"].get("Mode", "live").lower()
@@ -184,32 +190,21 @@ def paypal_ipn():
         except Exception as e:
             print(f"⚠️ Failed to send admin webhook: {e}")
 
-    # 🔹 Promote or update user role
+    from bot.discord_adapter import apply_role, send_admin
+
     try:
-        from bot import bot, PAYER_ROLE, TRIAL_ROLE, INITIAL_ROLE, send_admin
+        # announce payment
+        if was_payer:
+            send_admin(f"💰 Renewal processed for {payer_email} — access extended.")
+        else:
+            send_admin(f"💳 Payment recorded for {payer_email} — trial cleared and access extended.")
 
-        async def promote_to_payer():
-            for g in bot.guilds:
-                member = g.get_member(int(discord_id))
-                if not member:
-                    continue
-                payer_role = discord.utils.get(g.roles, name=PAYER_ROLE)
-                trial_role = discord.utils.get(g.roles, name=TRIAL_ROLE)
-                initial_role = discord.utils.get(g.roles, name=INITIAL_ROLE)
-                if trial_role in member.roles:
-                    await member.remove_roles(trial_role)
-                if initial_role in member.roles:
-                    await member.remove_roles(initial_role)
-                if payer_role and payer_role not in member.roles:
-                    await member.add_roles(payer_role)
-                    await send_admin(f"💳 Payment recorded for {member.mention} — trial cleared and access extended.")
-                elif was_payer:
-                    await send_admin(f"💰 Renewal processed for {member.mention} — access extended.")
-                break
+        # try to sync role if Discord enabled
+        apply_role(discord_id, "Payer")
 
-        asyncio.run_coroutine_threadsafe(promote_to_payer(), bot.loop)
     except Exception as e:
-        print(f"⚠️ Failed to promote/update payer: {e}")
+        print(f"⚠️ Discord adapter failed to mirror role: {e}")
+
 
     return "OK", 200
 
@@ -228,32 +223,33 @@ def paypal_cancel():
 # ✅ Casharr System Task API (for WebUI dashboard)
 # ────────────────────────────────
 from flask import jsonify
-from bot import bot as discord_bot
-from bot.tasks.task_registry import get_all as get_all_tasks, has_task, run_once as run_task_once
+from webui.scheduler import scheduler
 
 @app.get("/api/tasks")
 def api_get_tasks():
-    """Return JSON list of all registered background tasks for dashboard."""
-    try:
-        tasks_data = get_all_tasks()
-        return jsonify({"ok": True, "tasks": tasks_data})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    """Return JSON list of background tasks (WebUI scheduler version)."""
+    data = []
+    for t in scheduler.tasks:
+        data.append({
+            "name": t["name"],
+            "interval": str(t["interval"]),
+            "next_run": t["next"].isoformat(),
+            "last_run": t["last_run"].isoformat() if t["last_run"] else None
+        })
+    return jsonify({"ok": True, "tasks": data})
 
 
 @app.post("/api/tasks/run")
 def api_run_task():
-    """Trigger a single task manually by name."""
+    """Manually trigger a task by name."""
+    name = request.json.get("name", "")
+    match = next((t for t in scheduler.tasks if t["name"].lower() == name.lower()), None)
+    if not match:
+        return jsonify({"ok": False, "error": "Task not found"}), 404
     try:
-        data = request.get_json(force=True)
-        name = data.get("name", "")
-        if not name:
-            return jsonify({"ok": False, "error": "Missing task name"}), 400
-        if not has_task(name):
-            return jsonify({"ok": False, "error": f"Unknown task: {name}"}), 404
-
-        run_task_once(discord_bot.loop, name)
-        return jsonify({"ok": True, "message": f"Task '{name}' triggered successfully."})
+        match["func"]()
+        match["last_run"] = datetime.now(timezone.utc)
+        return jsonify({"ok": True, "message": f"Task '{name}' executed manually."})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     
@@ -296,7 +292,78 @@ def api_status():
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
 
+@app.post("/api/pending/<int:action_id>/approve")
+def api_approve_action(action_id):
+    from database import resolve_pending_action
+    resolve_pending_action(action_id, True)
+    return redirect("/pending")
 
+@app.post("/api/pending/<int:action_id>/deny")
+def api_deny_action(action_id):
+    from database import resolve_pending_action
+    resolve_pending_action(action_id, False)
+    return redirect("/pending")
+
+@app.get("/api/sync/plex")
+def api_sync_plex_preview():
+    """Dry-run: show what users would be added from Plex."""
+    from plexhelper import PlexHelper
+    from database import get_all_members
+    plex = PlexHelper(
+        config["Plex"].get("URL"),
+        config["Plex"].get("Token"),
+        [x.strip() for x in config["Plex"].get("Libraries", "").split(",") if x.strip()]
+    )
+
+    plex_users = plex.list_users()
+    db_members = get_all_members()
+    existing_emails = {m[4].lower() for m in db_members if m[4]}  # column 4 = email
+
+    new_users = [u for u in plex_users if u["email"] not in existing_emails]
+    return jsonify({"ok": True, "new_count": len(new_users), "new_users": new_users})
+
+
+@app.post("/api/sync/plex")
+def api_sync_plex_commit():
+    """Commit Plex → DB sync (adds new users as Lifetime)."""
+    from plexhelper import PlexHelper
+    from database import save_member
+    plex = PlexHelper(
+        config["Plex"].get("URL"),
+        config["Plex"].get("Token"),
+        [x.strip() for x in config["Plex"].get("Libraries", "").split(",") if x.strip()]
+    )
+
+    plex_users = plex.list_users()
+    added = 0
+    for u in plex_users:
+        email = u["email"].lower().strip()
+        name = u["name"]
+        try:
+            save_member(
+                discord_id=None,
+                discord_tag=None,
+                first_name=name,
+                last_name="",
+                email=email,
+                mobile="",
+                invite_sent_at=None,
+                trial_start=None,
+                trial_end=None,
+                had_trial=0,
+                paid_until=None,
+                trial_reminder_sent_at=None,
+                paid_reminder_sent_at=None,
+                used_promo=None,
+                referrer=None,
+                status="Lifetime",
+                origin="sync"
+            )
+            added += 1
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "added": added})
 # ────────────────────────────────
 # Run Flask standalone (optional)
 # ────────────────────────────────

@@ -12,6 +12,13 @@
     <!-- ────── BOT & CHANNEL INFO ────── -->
     <div class="config-section">
       <h3>⚙️ Bot Connection</h3>
+        <div class="form-grid-2">
+            <label style="align-items:center;flex-direction:row;justify-content:space-between">
+              <span>Enable Discord Bot</span>
+              <input type="checkbox" name="Enabled" value="true"
+                    {% if config.get('enabled','false')|lower in ['true','1','yes','on'] %}checked{% endif %}>
+            </label>
+          </div>
       <div class="form-grid-2">
         <label>
           <span>Bot Token</span>
@@ -130,5 +137,8 @@
   }
   .btn:hover { opacity: 0.9; }
   .desc { color: var(--text-muted); margin-bottom: 1rem; }
+  input[type="checkbox"] {
+  width: 22px; height: 22px; accent-color: var(--accent);
+}
 </style>
 {% endblock %}

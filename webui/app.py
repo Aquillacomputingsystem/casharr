@@ -21,6 +21,7 @@ from plexhelper import PlexHelper
 from helpers.emailer import send_email
 from loghelper import LOG_DIR, logger
 
+
 from database import (
     DB_PATH, get_all_members, get_member, save_member,
     start_trial, end_trial, add_or_update_member, delete_member,
@@ -154,16 +155,121 @@ def dashboard():
         access_mode=access_mode,
     )
 
+@webui.route("/pending")
+def view_pending():
+    """Display pending approval queue or movement log."""
+    import sqlite3
+    import configparser
+    from flask import render_template
+    import os
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    auto_mode = not (cfg.get("AccessMode", "mode", fallback="Auto").strip().lower() == "manual")
+
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, discord_id, email, proposed_status, reason, detected_at
+        FROM pending_actions
+        ORDER BY detected_at DESC
+    """)
+    rows = c.fetchall()
+    conn.close()
+
+    return render_template("pending.html", actions=rows, auto_mode=auto_mode)
+    return render_template("pending.html", actions=rows, auto_mode=auto_mode)
+
+@webui.post("/api/pending/<int:action_id>/approve")
+def api_approve_pending(action_id: int):
+    """Approve a pending access change."""
+    import sqlite3, os
+    from flask import redirect
+    from database import update_member_status
+    from bot.discord_adapter import send_admin
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT discord_id, email, proposed_status FROM pending_actions WHERE id = ?",
+        (action_id,),
+    ).fetchone()
+
+    if row:
+        discord_id, email, new_status = row
+        update_member_status(discord_id or email, new_status)
+        send_admin(f"✅ Approved status change for {email or discord_id} → {new_status}")
+
+    c.execute("DELETE FROM pending_actions WHERE id = ?", (action_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/pending")
+
+
+@webui.post("/api/pending/<int:action_id>/deny")
+def api_deny_pending(action_id: int):
+    """Reject and remove a pending access change."""
+    import sqlite3, os
+    from flask import redirect
+    from bot.discord_adapter import send_admin
+
+    db_path = os.path.join("data", "members.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT discord_id, email, proposed_status FROM pending_actions WHERE id = ?",
+        (action_id,),
+    ).fetchone()
+    conn.close()
+
+    if row:
+        discord_id, email, proposed_status = row
+        send_admin(f"❌ Denied pending change for {email or discord_id} ({proposed_status})")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM pending_actions WHERE id = ?", (action_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/pending")
+
+@webui.route("/api/logs/live")
+def api_logs_live():
+    try:
+        with open("logs/latest.log", "r", encoding="utf-8") as f:
+            tail = f.read()[-5000:]
+        return {"ok": True, "log": tail}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 # ───────────────────────────────
 # API: simple stats + logs
 # ───────────────────────────────
 @webui.route("/api/stats")
 def api_stats():
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
+    from datetime import datetime
+    now = datetime.now().replace(tzinfo=None)
     total = len(rows)
     active_trials = sum(1 for r in rows if r[8] and datetime.fromisoformat(r[8]) > now)
-    active_payers = sum(1 for r in rows if r[10] and datetime.fromisoformat(r[10]) > now)
+    active_payers = 0
+    for r in rows:
+        if not r[10]:
+            continue
+        try:
+            paid_until = datetime.fromisoformat(r[10])
+            # make both aware or both naive for comparison
+            if paid_until.tzinfo is None:
+                paid_until = paid_until.replace(tzinfo=timezone.utc)
+            if paid_until > now:
+                active_payers += 1
+        except Exception:
+            continue
     expired = sum(
         1 for r in rows
         if ((r[8] and datetime.fromisoformat(r[8]) < now) or (r[10] and datetime.fromisoformat(r[10]) < now))
@@ -482,6 +588,9 @@ def config_discord():
 
     if request.method == "POST":
         try:
+            # ✅ Toggle support
+            cfg["Discord"]["Enabled"] = "true" if request.form.get("Enabled") else "false"
+
             cfg["Discord"]["BotToken"] = request.form.get("BotToken", "").strip()
             cfg["Discord"]["AdminChannelID"] = request.form.get("AdminChannelID", "").strip()
             cfg["Discord"]["InitialRole"] = request.form.get("InitialRole", "").strip()
