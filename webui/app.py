@@ -952,10 +952,25 @@ def api_member_set_role(discord_id):
     
 @webui.route("/api/member/<discord_id>", methods=["GET"])
 def api_member_get(discord_id):
-    """Return full member details for modal view."""
-    member = get_member(discord_id)
+    """Return full member details for modal view (Discord ID or Email fallback)."""
+    from database import get_member, get_member_by_email
+    from flask import request
+
+    discord_id = (discord_id or "").strip()
+    email = request.args.get("email", "").strip()
+    member = None
+
+    # 1️⃣ If Discord ID looks valid, try that first
+    if discord_id and discord_id.lower() not in ("none", "null", "noid", "0"):
+        member = get_member(discord_id)
+
+    # 2️⃣ Otherwise or if not found, try by email
+    if not member and email:
+        member = get_member_by_email(email)
+
     if not member:
-        return jsonify({"ok": False, "error": "Member not found"}), 404
+        return jsonify({"ok": False, "error": f"Member not found ({discord_id or email})"}), 404
+
     fields = [
         "discord_id","discord_tag","first_name","last_name","email",
         "mobile","join_date","trial_start","trial_end","paid_until",
