@@ -185,12 +185,11 @@ function renderRows(list){
       <td>${m.email||'-'}</td>
       <td>${m.mobile||'-'}</td>
       <td>
-        <select class="status-select" data-id="${m.discord_id}">
-          <option value="Trial" ${m.status==='Trial'?'selected':''}>Trial</option>
-          <option value="Payer" ${m.status==='Payer'?'selected':''}>Payer</option>
-          <option value="Lifetime" ${m.status==='Lifetime'?'selected':''}>Lifetime</option>
-          <option value="Expired" ${m.status==='Expired'?'selected':''}>Expired</option>
-        </select>
+      <select class="status-select" data-id="${m.discord_id}">
+      ${(ROLE_OPTIONS.length ? ROLE_OPTIONS : ['Initial','Trial','Payer','Lifetime','Expired'])
+        .map(r => `<option value="${r}" ${m.status===r?'selected':''}>${r}</option>`)
+        .join('')}
+      </select>
       </td>
       <td>${m.referrer_id||'-'}</td>
       <td><div class="action-bar">
@@ -202,6 +201,14 @@ function renderRows(list){
       </div></td>
     </tr>`).join('');
 }
+    let ROLE_OPTIONS = [];
+    fetch('/api/roles').then(r=>r.json()).then(j=>{
+      if (j.ok && Array.isArray(j.roles)) {
+        ROLE_OPTIONS = j.roles;
+        // re-render if data already loaded
+        if (cache.length) applyFilter();
+      }
+    });
 async function loadMembers(){
   try{
     const res=await fetch('/api/members');

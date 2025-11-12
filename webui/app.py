@@ -246,6 +246,92 @@ def api_logs_live():
         return {"ok": True, "log": tail}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    
+@webui.route("/api/sync/plex", methods=["POST"])
+def api_sync_plex():
+    """Sync all Plex users into Casharr DB (mark as Lifetime if new)."""
+    import configparser, os, sqlite3
+    from plexhelper import PlexHelper
+    from database import save_member, get_member_by_email
+
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+        plex_url = cfg.get("Plex", "URL", fallback="")
+        plex_token = cfg.get("Plex", "Token", fallback="")
+        plex_libs = [
+            s.strip() for s in cfg.get("Plex", "Libraries", fallback="").split(",") if s.strip()
+        ]
+        lifetime_role = cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip()
+
+        if not plex_url or not plex_token:
+            return jsonify({"ok": False, "error": "Plex URL or Token missing"}), 400
+
+        plex = PlexHelper(plex_url, plex_token, plex_libs)
+        plex_users = plex.account.users()
+
+        # Ensure plex_username column exists in DB
+        conn = sqlite3.connect("data/members.db")
+        c = conn.cursor()
+        c.execute("PRAGMA table_info(members)")
+        cols = [r[1] for r in c.fetchall()]
+        if "plex_username" not in cols:
+            c.execute("ALTER TABLE members ADD COLUMN plex_username TEXT;")
+            conn.commit()
+            print("🆕 Added 'plex_username' column to members table.")
+        conn.close()
+
+        added, skipped = 0, 0
+        for user in plex_users:
+            email = getattr(user, "email", None)
+            if not email:
+                continue
+
+            plex_username = getattr(user, "title", "") or ""
+
+            existing = get_member_by_email(email)
+            if existing:
+                skipped += 1
+                print(f"[Plex Sync] Skipped existing user {email}")
+                continue
+
+            # Don’t store Plex username in first_name or last_name
+            save_member(
+                email=email,
+                origin="sync",
+                status=lifetime_role,
+                roles=lifetime_role
+            )
+
+            # Store Plex username and enforce correct status/origin
+            conn = sqlite3.connect("data/members.db")
+            c = conn.cursor()
+            c.execute(
+                """
+                UPDATE members
+                SET plex_username=?,
+                    status=?,
+                    discord_roles=?,
+                    origin='sync'
+                WHERE lower(email)=lower(?)
+                """,
+                (plex_username, lifetime_role, lifetime_role, email),
+            )
+            conn.commit()
+            conn.close()
+
+            added += 1
+            print(f"[Plex Sync] Added new Lifetime user {email} (Plex name: {plex_username})")
+
+        msg = f"✅ Plex sync complete — {added} added, {skipped} skipped."
+        print(msg)
+        return jsonify({"ok": True, "message": msg})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 # ───────────────────────────────
 # API: simple stats + logs
@@ -710,9 +796,18 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
-    """Return all members with consistent status (prefers DB column 'status')."""
+    """Return all members with consistent status (prefers DB column 'status' but applies config fallback logic)."""
+    import os, configparser
     from datetime import datetime, timezone
     from database import get_all_members
+
+    # Load Discord role names from config.ini
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    INITIAL_ROLE  = cfg.get("Discord", "InitialRole",  fallback="Initial").strip()
+    TRIAL_ROLE    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
+    PAYER_ROLE    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
+    LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip()
 
     rows = get_all_members()
     now = datetime.now(timezone.utc)
@@ -727,9 +822,9 @@ def api_members():
             return None
 
     for r in rows:
-        # Safely handle missing Discord IDs
+        # Handle possible missing/placeholder Discord IDs
         try:
-            did = int(r[0]) if r[0] else 0
+            did = int(r[0]) if r[0] and str(r[0]).isdigit() else 0
         except Exception:
             did = 0
 
@@ -749,9 +844,8 @@ def api_members():
                 role_display = "No Access"
         else:
             paid_until = parse_iso_safe(r[10] if len(r) > 10 else None)
-            trial_end = parse_iso_safe(r[8] if len(r) > 8 else None)
+            trial_end  = parse_iso_safe(r[8] if len(r) > 8 else None)
 
-            # timezone-safe comparison helpers
             import datetime as dtlib
             def _to_naive(value):
                 if not value:
@@ -774,31 +868,69 @@ def api_members():
             else:
                 role_display = INITIAL_ROLE
 
-        # 🟢 Prefer stored 'status' column if present (use last column dynamically)
-        try:
-            stored_status = r[-1] if len(r) >= 22 else None
-        except Exception:
+        # 🟢 Prefer stored 'status' if present (last column is status)
             stored_status = None
+            try:
+                if isinstance(r, (list, tuple)) and len(r) > 0:
+                    # we know the SELECT * order from get_all_members
+                    # look up by index name dynamically
+                    import sqlite3
+                    conn = sqlite3.connect("data/members.db")
+                    c = conn.cursor()
+                    c.execute("PRAGMA table_info(members)")
+                    colnames = [x[1] for x in c.fetchall()]
+                    conn.close()
+                    if "status" in colnames:
+                        status_index = colnames.index("status")
+                        stored_status = r[status_index]
+            except Exception:
+                pass
+        # Determine origin (sync/manual/invite/etc.)
+        origin = None
+        try:
+            origin = r[17] if len(r) > 17 else None
+        except Exception:
+            origin = None
 
-        final_status = stored_status if stored_status else role_display
-        print(f"DEBUG: {r[0]} -> stored={stored_status}, fallback={role_display}")  # temporary
+        # Decide final status logic
+        if stored_status and str(stored_status).strip():
+            # Prefer explicit DB value
+            final_status = stored_status.strip()
+        else:
+            # Apply fallback logic
+            if (origin or "").lower() == "sync":
+                # Plex-synced users with no stored status get LifetimeRole
+                final_status = LIFETIME_ROLE
+            elif "trial" in role_display.lower():
+                final_status = TRIAL_ROLE
+            elif "payer" in role_display.lower():
+                final_status = PAYER_ROLE
+            elif "life" in role_display.lower():
+                final_status = LIFETIME_ROLE
+            elif "expired" in role_display.lower():
+                final_status = "Expired"
+            else:
+                # Absolute fallback when nothing matches
+                final_status = INITIAL_ROLE
 
         out.append({
-            "discord_id": r[0] or "",
-            "discord_tag": r[1] or "",
-            "first_name": r[2] or "",
-            "last_name": r[3] or "",
-            "email": r[4] or "",
-            "mobile": r[5] or "",
-            "trial_end": r[8] or "",
-            "paid_until": r[10] or "",
+            "discord_id": r[0],
+            "discord_tag": r[1],
+            "first_name": r[2],
+            "last_name": r[3],
+            "email": r[4],
+            "mobile": r[5],
+            "trial_start": r[7],
+            "trial_end": r[8],
+            "paid_until": r[10],
+            "origin": origin or "",
+            "status": final_status,
             "referrer_id": r[14] if len(r) > 14 else None,
-            "origin": r[17] if len(r) > 17 else None,
-            "discord_role": role_display,
-            "status": final_status,  # unified display
         })
 
-    return jsonify({"members": out})
+    # 🟢 Return compiled JSON list
+    return jsonify({"ok": True, "members": out})
+
 
 @webui.route("/api/member/<discord_id>/role", methods=["POST"])
 def api_member_set_role(discord_id):
@@ -1910,3 +2042,18 @@ def api_member_set_status(discord_id):
             logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
 
     return jsonify({"ok": True, "message": f"Status updated to {new_status}."})
+
+@webui.route("/api/roles", methods=["GET"])
+def api_roles():
+    import configparser, os
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    roles = [
+        cfg.get("Discord", "InitialRole",  fallback="Initial").strip(),
+        cfg.get("Discord", "TrialRole",    fallback="Trial").strip(),
+        cfg.get("Discord", "PayerRole",    fallback="Payer").strip(),
+        cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip(),
+        "Expired"
+    ]
+    return jsonify({"ok": True, "roles": roles})

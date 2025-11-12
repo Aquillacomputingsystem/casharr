@@ -96,86 +96,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ─────────────────────────────
-# Member Operations
-# ─────────────────────────────
-def save_member(
-    discord_id,
-    first_name="",
-    last_name="",
-    email="",
-    mobile="",
-    discord_tag="",
-    origin="invite",
-    roles=None,
-):
-    """Insert or update a member’s basic info."""
-
-    roles_value = None
-    if roles is not None:
-        if isinstance(roles, str):
-            roles_value = roles.strip()
-        else:
-            cleaned = []
-            for item in roles:
-                text = str(item).strip()
-                if text:
-                    cleaned.append(text)
-            roles_value = ", ".join(cleaned)
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # ─────────────────────────────
-    # Insert or update (match on Discord ID OR Email OR Mobile)
-    # ─────────────────────────────
-    existing = None
-    try:
-        c.execute("""
-            SELECT discord_id FROM members
-            WHERE discord_id=? OR (email IS NOT NULL AND email=?) OR (mobile IS NOT NULL AND mobile=?)
-        """, (str(discord_id), email, mobile))
-        existing = c.fetchone()
-    except Exception:
-        existing = None
-
-    if existing:
-        # Update existing record
-        c.execute("""
-            UPDATE members
-            SET
-                discord_tag=?,
-                first_name=?,
-                last_name=?,
-                email=?,
-                mobile=?,
-                origin=COALESCE(origin, ?),
-                discord_roles=COALESCE(?, discord_roles)
-            WHERE discord_id=? OR (email IS NOT NULL AND email=?) OR (mobile IS NOT NULL AND mobile=?)
-        """, (discord_tag, first_name, last_name, email, mobile, origin, roles_value,
-              str(discord_id), email, mobile))
-    else:
-        # Insert new record
-        c.execute("""
-            INSERT INTO members (
-                discord_id, discord_tag, first_name, last_name,
-                email, mobile, origin, discord_roles
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (str(discord_id), discord_tag, first_name, last_name,
-              email, mobile, origin, roles_value))
-
-        (
-            str(discord_id),
-            discord_tag,
-            first_name,
-            last_name,
-            email,
-            mobile,
-            origin,
-            roles_value,
-        ),
-    conn.commit()
-    conn.close()
-
 
 def set_referrer(discord_id, referrer_id):
     """Record who referred a member and mark the referrer as active."""
@@ -483,31 +403,79 @@ def _configured_trial_days(default: int = 30) -> int:
     except Exception:
         return default
 
-
-def add_or_update_member(
-    discord_id,
-    *,
+def save_member(
+    discord_id=None,
     discord_tag="",
     first_name="",
     last_name="",
     email="",
     mobile="",
     origin="manual",
+    roles=None,
+    status=None,
 ):
-    """Upsert the core member fields used by the WebUI."""
+    """
+    Create or update a member record.
+    - Matches on discord_id or email.
+    - If discord_id is missing, creates a placeholder 'plex:<email>'.
+    - Never overwrites an existing status/roles unless explicitly provided.
+    """
+
+    # Normalize fields
+    discord_id = str(discord_id or "").strip()
+    email = str(email or "").strip().lower()
+    roles_value = None
+    if roles:
+        roles_value = ", ".join(roles) if isinstance(roles, (list, tuple)) else str(roles)
+
+    # Placeholder for Plex-only users
     if not discord_id:
-        raise ValueError("discord_id is required")
+        discord_id = f"plex:{email}" if email else secrets.token_hex(4)
 
-    save_member(
-        discord_id=str(discord_id),
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        mobile=mobile,
-        discord_tag=discord_tag,
-        origin=origin,
-    )
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
 
+    # Check existing record
+    c.execute("""
+        SELECT discord_id, status, discord_roles
+        FROM members
+        WHERE discord_id=? OR (email IS NOT NULL AND lower(email)=lower(?))
+    """, (discord_id, email))
+    existing = c.fetchone()
+
+    if existing:
+        current_id, current_status, current_roles = existing
+        print(f"[save_member] Updating existing {email or discord_id}")
+        c.execute("""
+            UPDATE members
+            SET discord_tag = COALESCE(NULLIF(?, ''), discord_tag),
+                first_name  = COALESCE(NULLIF(?, ''), first_name),
+                last_name   = COALESCE(NULLIF(?, ''), last_name),
+                email       = COALESCE(NULLIF(?, ''), email),
+                mobile      = COALESCE(NULLIF(?, ''), mobile),
+                origin      = COALESCE(origin, ?),
+                status      = COALESCE(?, status),
+                discord_roles = COALESCE(?, discord_roles)
+            WHERE discord_id=? OR (email IS NOT NULL AND lower(email)=lower(?))
+        """, (
+            discord_tag, first_name, last_name, email, mobile, origin,
+            status or current_status, roles_value or current_roles,
+            discord_id, email
+        ))
+    else:
+        print(f"[save_member] Inserting new {email or discord_id}")
+        c.execute("""
+            INSERT INTO members (
+                discord_id, discord_tag, first_name, last_name, email, mobile,
+                origin, status, discord_roles
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            discord_id, discord_tag, first_name, last_name, email, mobile,
+            origin, status, roles_value
+        ))
+
+    conn.commit()
+    conn.close()
 
 def delete_member(discord_id=None, email=None):
     """
@@ -725,7 +693,7 @@ def update_member_status(discord_id: str, new_status: str):
     return True
 
 def ensure_schema():
-    """Ensure members table has all required columns and that pending_actions exists."""
+    """Ensure members table has all required columns and that pending_actions and plex_username exist."""
     db_path = os.path.join("data", "members.db")
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -736,9 +704,21 @@ def ensure_schema():
     c.execute("PRAGMA table_info(members);")
     columns = [r[1] for r in c.fetchall()]
     if "status" not in columns:
-        c.execute("ALTER TABLE members ADD COLUMN status TEXT DEFAULT 'Trial';")
+        c.execute("ALTER TABLE members ADD COLUMN status TEXT;")
+        conn.commit()
+        print("🆕 Added 'status' column to members table (no default).")
         conn.commit()
         print("🆕 Added 'status' column to members table.")
+
+    # ─────────────────────────────
+    # Ensure 'plex_username' column exists in members
+    # ─────────────────────────────
+    c.execute("PRAGMA table_info(members);")
+    columns = [r[1] for r in c.fetchall()]
+    if "plex_username" not in columns:
+        c.execute("ALTER TABLE members ADD COLUMN plex_username TEXT;")
+        conn.commit()
+        print("🆕 Added 'plex_username' column to members table.")
 
     # ─────────────────────────────
     # Ensure 'pending_actions' table exists
@@ -754,7 +734,9 @@ def ensure_schema():
         )
     """)
     conn.commit()
+
     conn.close()
+
 
 def add_pending_action(discord_id, email, proposed_status, reason):
     conn = sqlite3.connect(DB_PATH)
@@ -780,6 +762,9 @@ def resolve_pending_action(action_id, approve: bool):
             update_member_role(row[0], row[1])
     c.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
     conn.commit(); conn.close()
+
+def add_or_update_member(**kwargs):
+    save_member(**kwargs)
 
 # ─────────────────────────────
 # Initialize Database

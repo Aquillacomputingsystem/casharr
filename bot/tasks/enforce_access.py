@@ -1,6 +1,6 @@
 # bot/tasks/enforce_access.py
 from .task_registry import register_task, mark_start, mark_finish
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta   # ✅ keep this line only
 from discord.ext import tasks
 import discord
 import sqlite3, os, asyncio, json
@@ -159,12 +159,16 @@ async def enforce_access():
     MANUAL mode: upgrades happen automatically, but downgrades require admin DM approval.
     Plex-only users (not in Discord) are never touched.
     """
-    # ✅ Added tracking start
+    # ─────────────────────────────
+    # Start + Time Tracking
+    # ─────────────────────────────
     name = "Enforce Access"
     started = datetime.now(timezone.utc)
     mark_start(name, enforce_access)
 
+    # ✅ Define `now` once, early
     now = datetime.now(timezone.utc)
+
     skip_data = load_skips()
     logger.info("🔒 Enforcement cycle started (%s)", ACCESS_MODE.upper())
 
@@ -298,13 +302,14 @@ _register()
 # Automatic Daily Backup Task
 # ─────────────────────────────
 from discord.ext import tasks
-import shutil, datetime
+import shutil
+from datetime import datetime
 
 @tasks.loop(hours=24)
 async def auto_backup():
     from database import DB_PATH
     os.makedirs("exports", exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")  # ✅ simplified call
     shutil.copy2(DB_PATH, f"exports/auto_backup_{stamp}.db")
     logger.info("💾 Automatic database backup created.")
 
