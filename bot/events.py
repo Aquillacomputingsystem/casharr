@@ -12,10 +12,6 @@ from bot import (
 )
 from database import get_member, set_referrer
 # Background tasks
-from bot.tasks.enforce_access import enforce_access, sync_trial_durations
-from bot.tasks.audit_plex import audit_plex_access
-from bot.tasks.reminders import send_renewal_reminders
-from bot.tasks.maintenance import backup_database_daily, register_tasks as register_maintenance
 
 
 # ─────────────────────────────
@@ -28,39 +24,6 @@ invite_cache: dict[int, list[discord.Invite]] = {}
 async def on_ready():
     """Run startup routines once the bot is connected."""
     logger.info("✅ Logged in as %s", bot.user)
-
-    # ─────────────────────────────
-    # Sync trial durations
-    # ─────────────────────────────
-    updated = sync_trial_durations()
-    if updated > 0:
-        msg = f"🕒 Synced {updated} trial dates to new [Trial].DurationDays setting."
-        logger.info(msg)
-        await send_admin(msg)
-    else:
-        logger.info("✅ Trial durations already match DurationDays.")
-
-    # ─────────────────────────────
-    # Start background loops
-    # ─────────────────────────────
-    if not enforce_access.is_running():
-        enforce_access.start()
-        logger.info("🔁 Started enforce_access loop")
-    if not audit_plex_access.is_running():
-        audit_plex_access.start()
-        logger.info("🔁 Started audit_plex_access loop")
-    if REMINDERS_ENABLED and not send_renewal_reminders.is_running():
-        send_renewal_reminders.start()
-        logger.info("🔁 Started send_renewal_reminders loop")
-
-    # ✅ Added: Start maintenance (Database Backup)
-    try:
-        register_maintenance()
-        if not backup_database_daily.is_running():
-            backup_database_daily.start()
-            logger.info("🔁 Daily database backup loop started successfully.")
-    except Exception as e:
-        logger.error(f"⚠️ Failed to start maintenance tasks: {e}")
 
     # ─────────────────────────────
     # Start PayPal IPN Flask server automatically
@@ -101,15 +64,6 @@ async def on_ready():
         tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         logger.error(f"❌ Slash command sync failed:\n{tb}")
 
-    # ─────────────────────────────
-    # Start daily auto-backup after bot ready
-    # ─────────────────────────────
-    try:
-        from bot.tasks.enforce_access import start_auto_backup_once_ready
-        import asyncio
-        asyncio.create_task(start_auto_backup_once_ready())
-    except Exception as e:
-        logger.error("⚠️ Could not start auto-backup loop: %s", e)
 
     # ─────────────────────────────
     # Notify admin channel that bot is online
@@ -120,15 +74,6 @@ async def on_ready():
     except Exception as e:
         logger.error(f"⚠️ Failed to send admin notification: {e}")
 
-    # ─────────────────────────────
-    # Optional initial Plex audit
-    # ─────────────────────────────
-    try:
-        await asyncio.sleep(3)
-        await audit_plex_access()
-        logger.info("⚡ Manual first audit triggered from on_ready()")
-    except Exception as e:
-        logger.error("⚠️ Manual audit trigger failed: %s", e)
 
 
 @bot.event
