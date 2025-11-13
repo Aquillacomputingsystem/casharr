@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="update-success">
+  <div class="success-card">
+    <h2>✅ Thank You!</h2>
+    <p>Your details have been successfully updated.</p>
+    <a href="/" class="btn btn-primary">Return to Casharr</a>
+  </div>
+</section>
+
+<style>
+.update-success {
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:70vh;
+  text-align:center;
+}
+.success-card {
+  background: var(--bg);
+  padding: 40px 50px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
+.success-card h2 {
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+.success-card p {
+  color: var(--text);
+  margin-bottom: 20px;
+}
+</style>
+{% endblock %}
