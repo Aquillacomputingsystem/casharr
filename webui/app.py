@@ -13,7 +13,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from webui.scheduler import scheduler
 
 # ───────────────────────────────
 # App / Helpers / DB imports
@@ -2101,15 +2100,3 @@ def api_roles():
         "Expired"
     ]
     return jsonify({"ok": True, "roles": roles})
-
-@webui.route("/api/run/enforce", methods=["POST"])
-def api_run_enforce():
-    from webui.scheduler import enforce_access
-    enforce_access()
-    return jsonify({"ok": True, "message": "Enforcement run completed"})
-
-@webui.route("/api/run/reminders", methods=["POST"])
-def api_run_reminders():
-    from webui.scheduler import send_expiry_reminders
-    send_expiry_reminders()
-    return jsonify({"ok": True, "message": "Reminders sent"})
