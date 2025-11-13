@@ -173,33 +173,19 @@ const $mobile=document.getElementById('m_mobile');
 
 let cache=[];let dmTarget=null;
 
-function cleanValue(value){
-  if(value===null||value===undefined)return '';
-  const str=String(value).trim();
-  if(!str)return '';
-  const lower=str.toLowerCase();
-  return (lower==='none'||lower==='null'||lower==='undefined')?'':str;
-}
-
 function statusPill(s){
   const cls=s==='Trial'?'status-trial':s==='Payer'?'status-payer':s==='Lifetime'?'status-life':s==='Expired'?'status-exp':'';
   return `<span class="status-pill ${cls}">${s||'-'}</span>`;
 }
 function renderRows(list){
   if(!list.length){$body.innerHTML='<tr><td colspan="6">No members found.</td></tr>';return;}
-  $body.innerHTML=list.map(m=>{
-    const safeId=cleanValue(m.discord_id);
-    const safeEmail=cleanValue(m.email);
-    const safeMobile=cleanValue(m.mobile);
-    const safeFirst=cleanValue(m.first_name)||'-';
-    const safeLast=cleanValue(m.last_name);
-    return `
-    <tr data-id="${safeId}" data-email="${safeEmail}">
-      <td class="clickable-name">${safeFirst} ${safeLast}</td>
-      <td>${safeEmail||'-'}</td>
-      <td>${safeMobile||'-'}</td>
+  $body.innerHTML=list.map(m=>`
+    <tr data-email="${m.email}">
+      <td class="clickable-name">${m.first_name||'-'} ${m.last_name||''}</td>
+      <td>${m.email||'-'}</td>
+      <td>${m.mobile||'-'}</td>
       <td>
-      <select class="status-select" data-id="${safeId}">
+      <select class="status-select" data-id="${m.discord_id}">
       ${(ROLE_OPTIONS.length ? ROLE_OPTIONS : ['Initial','Trial','Payer','Lifetime','Expired'])
         .map(r => `<option value="${r}" ${m.status===r?'selected':''}>${r}</option>`)
         .join('')}
@@ -257,18 +243,17 @@ $save.addEventListener('click',async()=>{
 });
 
 $body.addEventListener('click',e=>{
-  const tr=e.target.closest('tr');
-  if(!tr)return;
-  const id=cleanValue(tr.dataset.id);
-  const email=cleanValue(tr.dataset.email);
-  const name=tr.querySelector('td')?.textContent||'';
-  if(e.target.closest('.js-paid'))return markPaid(id);
-  if(e.target.closest('.js-trial'))return extendTrial(id);
-  if(e.target.closest('.js-view'))return openViewModal(id,email);
-  if(e.target.closest('.js-dm'))return openDMModal(id,name);
-  if(e.target.closest('.js-remove')){
-    if(confirm('Remove Plex + downgrade to No Access?'))removeMember(id,email);
-  }
+  const v=e.target.closest('.js-view');
+  const dm=e.target.closest('.js-dm');
+  const paid = e.target.closest('.js-paid');
+  const trial = e.target.closest('.js-trial');
+  if (paid) return markPaid(id);
+  if (trial) return extendTrial(id);
+  const del=e.target.closest('.js-remove');
+  const tr=e.target.closest('tr');if(!tr)return;const id=tr.dataset.id;
+  if(v)return openViewModal(id);
+  if(dm)return openDMModal(id,tr.querySelector('td').textContent);
+  if(del){if(confirm('Remove Plex + downgrade to No Access?'))removeMember(id);}
 });
 
 function removeMember(discordId, email) {
@@ -303,16 +288,19 @@ function removeMember(discordId, email) {
 
 
 
-async function openViewModal(id,email){
+async function openViewModal(id){
   const modal = document.getElementById('viewModal');
   modal.classList.remove('hidden');
   const body = document.getElementById('viewBody');
   body.innerHTML = 'Loading...';
 
+  // Get email from the table row (2nd <td>)
+  const row = document.querySelector(`tr[data-email="${email}"]`);
+  const email = row ? row.children[1].textContent.trim() : "";
+
   try {
-    const safeId=id||'noid';
     const emailParam = email ? `?email=${encodeURIComponent(email)}` : "";
-    const res = await fetch(`/api/member/${safeId}${emailParam}`);
+    const res = await fetch(`/api/member/${id}${emailParam}`);
     const j = await res.json();
     if(!j.ok) throw new Error(j.error);
     const m = j.member;
@@ -442,7 +430,7 @@ $body.addEventListener("change", async (e) => {
       if (data.ok) {
         alert("✅ " + data.message);
         // update UI instantly without reload
-        const row = select.closest('tr');
+        const row = document.querySelector(`tr[data-email="${email}"]`);
         if (row) {
           const cell = row.querySelector(".status-select");
           if (cell) cell.value = newStatus;
