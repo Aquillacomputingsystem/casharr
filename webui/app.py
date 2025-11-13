@@ -981,31 +981,31 @@ def api_member_set_role(discord_id):
     
 @webui.route("/api/member/<discord_id>", methods=["GET"])
 def api_member_get(discord_id):
+    """Return full member details for modal view (Discord ID or Email fallback)."""
     from database import get_member, get_member_by_email
-    from flask import request, jsonify
+    from flask import request
 
     discord_id = (discord_id or "").strip()
     email = request.args.get("email", "").strip()
     member = None
 
-    if discord_id.isdigit():
+    # 1️⃣ If Discord ID looks valid, try that first
+    if discord_id and discord_id.lower() not in ("none", "null", "noid", "0"):
         member = get_member(discord_id)
 
-    if email:
+    # 2️⃣ Otherwise or if not found, try by email
+    if not member and email:
         member = get_member_by_email(email)
 
     if not member:
         return jsonify({"ok": False, "error": f"Member not found ({discord_id or email})"}), 404
 
-    keys = [
-        "discord_id", "discord_tag", "first_name", "last_name", "email", "mobile",
-        "invite_sent_at", "trial_start", "trial_end", "had_trial",
-        "paid_until", "trial_reminder_sent_at", "paid_reminder_sent_at",
-        "used_promo", "referrer_id", "is_referrer", "referral_paid", "origin", "discord_roles"
+    fields = [
+        "discord_id","discord_tag","first_name","last_name","email",
+        "mobile","join_date","trial_start","trial_end","paid_until",
+        "role","referrer_id","origin","status"
     ]
-
-    data = dict(zip(keys, member))
-    data["status"] = data.get("discord_roles") or data.get("origin") or "Unknown"
+    data = {fields[i]: member[i] if i < len(member) else None for i in range(len(fields))}
     return jsonify({"ok": True, "member": data})
 
 @webui.route("/api/member/<discord_id>/delete", methods=["POST"])
