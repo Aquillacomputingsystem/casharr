@@ -1259,7 +1259,9 @@ def referral_portal():
 # ─────────────────────────────
 @webui.route("/api/message/<target>", methods=["POST"])
 def api_message(target):
+    data = request.get_json(silent=True) or {}
     groups = data.get("groups", [])
+
     """
     Unified messaging endpoint for WebUI.
     Sends messages through any enabled notification system (Discord, Email, SMS).
@@ -1294,11 +1296,20 @@ def api_message(target):
         return jsonify({"ok": False, "error": "No channels selected."}), 400
 
     # ── Retrieve target(s)
-    recipients = []
+# Collect recipients
     if target == "all":
         recipients = get_all_members()
+    else:
+        m = get_member(target)
+        if not m:
+            # fallback: lookup by email if target is email
+            from database import get_member_by_email
+            m = get_member_by_email(target)
+        recipients = [m] if m else []
+
+    # Filter by groups if given
     if groups:
-        recipients = [r for r in recipients if (r[11] or '').lower() in groups]
+        recipients = [r for r in recipients if (r[11] or "").lower() in groups]
 
     if not recipients:
         return jsonify({"ok": False, "error": "No matching members found."}), 404
