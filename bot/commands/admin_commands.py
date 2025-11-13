@@ -149,17 +149,7 @@ async def sync_members(interaction: discord.Interaction):
         origin = record[17] if record and len(record) > 17 and record[17] else "sync"
 
         if not record:
-            save_member(
-                discord_id=str(member.id),
-                discord_tag=tag,
-                first_name="",
-                last_name="",
-                email="",
-                mobile="",
-                origin=origin,
-                roles=roles_snapshot,
-                status=None,
-            )
+            save_member(member.id, "", "", "", "", discord_tag=tag, origin=origin, roles=roles_snapshot)
             count_new += 1
             roles_updated += 1
             continue
