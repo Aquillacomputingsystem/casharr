@@ -33,10 +33,6 @@ if discord_enabled and discord_token:
         import bot.events
         import bot.commands.user_commands
         import bot.commands.admin_commands
-        import bot.commands.reports
-        import bot.tasks.enforce_access
-        import bot.tasks.audit_plex
-        import bot.tasks.reminders
 
         logger.info("🤖 Launching Casharr Discord bot...")
         try:
