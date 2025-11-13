@@ -429,13 +429,8 @@ def save_member(
         roles_value = ", ".join(roles) if isinstance(roles, (list, tuple)) else str(roles)
 
     # Placeholder for Plex-only users
-# Placeholder for Plex-only users
-        if not discord_id:
-            # For Plex syncs, leave discord_id blank (NULL)
-            if origin == "sync" and email:
-                discord_id = None
-            else:
-                discord_id = secrets.token_hex(4)
+    if not discord_id:
+        discord_id = f"plex:{email}" if email else secrets.token_hex(4)
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()

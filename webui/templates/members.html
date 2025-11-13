@@ -289,35 +289,27 @@ function removeMember(discordId, email) {
 
 
 async function openViewModal(id){
-  const modal = document.getElementById('viewModal');
+  const modal=document.getElementById('viewModal');
   modal.classList.remove('hidden');
-  const body = document.getElementById('viewBody');
-  body.innerHTML = 'Loading...';
-
-  // Get email from the table row (2nd <td>)
-  const row = document.querySelector(`tr[data-id="${id}"]`);
-  const email = row ? row.children[1].textContent.trim() : "";
-
-  try {
-    const emailParam = email ? `?email=${encodeURIComponent(email)}` : "";
-    const res = await fetch(`/api/member/${id}${emailParam}`);
-    const j = await res.json();
-    if(!j.ok) throw new Error(j.error);
-    const m = j.member;
-    body.innerHTML = `
-      <p><b>Discord ID:</b> ${m.discord_id || '-'}</p>
-      <p><b>Discord Tag:</b> ${m.discord_tag || '-'}</p>
-      <p><b>Email:</b> ${m.email || '-'}</p>
-      <p><b>Mobile:</b> ${m.mobile || '-'}</p>
-      <p><b>Trial End:</b> ${m.trial_end || '-'}</p>
-      <p><b>Paid Until:</b> ${m.paid_until || '-'}</p>
-      <p><b>Referrer:</b> ${m.referrer_id || '-'}</p>
-      <p><b>Origin:</b> ${m.origin || '-'}</p>
-      <p><b>Status:</b> ${m.status || '-'}</p>
+  const body=document.getElementById('viewBody');
+  body.innerHTML='Loading...';
+  try{
+    const res=await fetch(`/api/member/${id}`);
+    const j=await res.json();
+    if(!j.ok)throw new Error(j.error);
+    const m=j.member;
+    body.innerHTML=`
+      <p><b>Discord ID:</b> ${m.discord_id||'-'}</p>
+      <p><b>Discord Tag:</b> ${m.discord_tag||'-'}</p>
+      <p><b>Email:</b> ${m.email||'-'}</p>
+      <p><b>Mobile:</b> ${m.mobile||'-'}</p>
+      <p><b>Trial End:</b> ${m.trial_end||'-'}</p>
+      <p><b>Paid Until:</b> ${m.paid_until||'-'}</p>
+      <p><b>Referrer:</b> ${m.referrer_id||'-'}</p>
+      <p><b>Origin:</b> ${m.origin||'-'}</p>
+      <p><b>Status:</b> ${m.status||'-'}</p>
     `;
-  } catch(e) {
-    body.innerHTML = '⚠️ ' + e.message;
-  }
+  }catch(e){body.innerHTML='⚠️ '+e.message;}
 }
 function closeViewModal(){document.getElementById('viewModal').classList.add('hidden');}
 
