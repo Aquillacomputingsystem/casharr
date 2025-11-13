@@ -180,7 +180,7 @@ function statusPill(s){
 function renderRows(list){
   if(!list.length){$body.innerHTML='<tr><td colspan="6">No members found.</td></tr>';return;}
   $body.innerHTML=list.map(m=>`
-    <tr data-id="${m.discord_id}">
+    <tr data-email="${m.email}">
       <td class="clickable-name">${m.first_name||'-'} ${m.last_name||''}</td>
       <td>${m.email||'-'}</td>
       <td>${m.mobile||'-'}</td>
@@ -295,7 +295,7 @@ async function openViewModal(id){
   body.innerHTML = 'Loading...';
 
   // Get email from the table row (2nd <td>)
-  const row = document.querySelector(`tr[data-id="${id}"]`);
+  const row = document.querySelector(`tr[data-email="${email}"]`);
   const email = row ? row.children[1].textContent.trim() : "";
 
   try {
@@ -430,7 +430,7 @@ $body.addEventListener("change", async (e) => {
       if (data.ok) {
         alert("✅ " + data.message);
         // update UI instantly without reload
-        const row = document.querySelector(`tr[data-id="${id}"]`);
+        const row = document.querySelector(`tr[data-email="${email}"]`);
         if (row) {
           const cell = row.querySelector(".status-select");
           if (cell) cell.value = newStatus;
