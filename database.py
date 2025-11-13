@@ -447,21 +447,30 @@ def save_member(
         current_id, current_status, current_roles = existing
         print(f"[save_member] Updating existing {email or discord_id}")
         c.execute("""
-            UPDATE members
-            SET discord_tag = COALESCE(NULLIF(?, ''), discord_tag),
-                first_name  = COALESCE(NULLIF(?, ''), first_name),
-                last_name   = COALESCE(NULLIF(?, ''), last_name),
-                email       = COALESCE(NULLIF(?, ''), email),
-                mobile      = COALESCE(NULLIF(?, ''), mobile),
-                origin      = COALESCE(origin, ?),
-                status      = COALESCE(?, status),
-                discord_roles = COALESCE(?, discord_roles)
-            WHERE discord_id=? OR (email IS NOT NULL AND lower(email)=lower(?))
-        """, (
-            discord_tag, first_name, last_name, email, mobile, origin,
-            status or current_status, roles_value or current_roles,
-            discord_id, email
-        ))
+    UPDATE members
+    SET discord_id = COALESCE(NULLIF(?, ''), discord_id),
+        discord_tag = COALESCE(NULLIF(?, ''), discord_tag),
+        first_name  = COALESCE(NULLIF(?, ''), first_name),
+        last_name   = COALESCE(NULLIF(?, ''), last_name),
+        email       = COALESCE(NULLIF(?, ''), email),
+        mobile      = COALESCE(NULLIF(?, ''), mobile),
+        origin      = COALESCE(origin, ?),
+        status      = COALESCE(?, status),
+        discord_roles = COALESCE(?, discord_roles)
+    WHERE discord_id=? OR (email IS NOT NULL AND lower(email)=lower(?))
+""", (
+    discord_id,            # NEW — updates the old plex:xxx ID
+    discord_tag,
+    first_name,
+    last_name,
+    email,
+    mobile,
+    origin,
+    status or current_status,
+    roles_value or current_roles,
+    current_id,            # IMPORTANT: match the existing row
+    email
+))
     else:
         print(f"[save_member] Inserting new {email or discord_id}")
         c.execute("""
