@@ -931,6 +931,34 @@ def api_members():
     # 🟢 Return compiled JSON list
     return jsonify({"ok": True, "members": out})
 
+@webui.route("/api/member", methods=["POST"])
+def api_member_save():
+    """Create or update a member record from the Add / Update modal."""
+    from database import save_member
+    data = request.get_json(silent=True) or {}
+
+    discord_id = data.get("discord_id", "").strip()
+    discord_tag = data.get("discord_tag", "").strip()
+    first = data.get("first_name", "").strip()
+    last = data.get("last_name", "").strip()
+    email = data.get("email", "").strip()
+    mobile = data.get("mobile", "").strip()
+
+    try:
+        save_member(
+            discord_id=discord_id,
+            discord_tag=discord_tag,
+            first_name=first,
+            last_name=last,
+            email=email,
+            mobile=mobile,
+            origin="manual",
+        )
+        return jsonify({"ok": True, "message": "Member saved successfully."})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @webui.route("/api/member/<discord_id>/role", methods=["POST"])
 def api_member_set_role(discord_id):
