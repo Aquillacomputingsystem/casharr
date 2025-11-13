@@ -1248,130 +1248,111 @@ def referral_portal():
 # ─────────────────────────────
 @webui.route("/api/message/<target>", methods=["POST"])
 def api_message(target):
+    groups = data.get("groups", [])
     """
-    Unified messaging endpoint.
-    Supports {update_link} and {pay_link} placeholders, expanded per-recipient.
+    Unified messaging endpoint for WebUI.
+    Sends messages through any enabled notification system (Discord, Email, SMS).
+    Target may be a single member's Discord ID or 'all' for broadcast.
     """
-    import asyncio, configparser, os
+    import asyncio
     from helpers.emailer import send_email
     from helpers.sms import send_sms
-    from database import get_all_members, get_member, generate_join_token
+    from database import get_member, get_all_members
     from bot import bot
+    import configparser, os
 
+    # ── Parse incoming data
     data = request.get_json(silent=True) or {}
-    subject = (data.get("subject") or "Message from Casharr Admin").strip()
-    body_tpl = (data.get("body") or "").strip()
-    include_paylink = bool(data.get("includePayLink"))
-    include_request_details = bool(data.get("includeRequestDetails"))
-    use_discord = bool(data.get("discord"))
-    use_email = bool(data.get("email"))
-    use_sms = bool(data.get("sms"))
-    groups = data.get("groups", [])
+    subject = data.get("subject", "Message from Casharr Admin").strip()
+    body = data.get("body", "").strip()
+    include_paylink = data.get("includePayLink", False)
+    use_discord = data.get("discord", False)
+    use_email = data.get("email", False)
+    use_sms = data.get("sms", False)
 
-    if not any([use_discord, use_email, use_sms]):
-        return jsonify({"ok": False, "error": "No channels selected."}), 400
-
+    # ── Load configuration
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
-    domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
 
+    paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
     discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=True)
     email_enabled = cfg.getboolean("SMTP", "Enabled", fallback=False)
     sms_enabled = cfg.getboolean("SMS", "Enabled", fallback=False)
 
-    # Resolve recipients
+    if not any([use_discord, use_email, use_sms]):
+        return jsonify({"ok": False, "error": "No channels selected."}), 400
+
+    # ── Retrieve target(s)
     recipients = []
     if target == "all":
         recipients = get_all_members()
-        if groups:
-            # If you store a status column, filter by it. Adjust index if needed.
-            # r[?] -> your status column (you already surface "status" in /api/members;
-            # here we fall back to ref/role if you have it stored differently).
-            # For now, just send to everyone selected via "all".
-            pass
-    else:
-        # Single member by discord_id
-        m = get_member(target)
-        if m:
-            recipients = [m]
+    if groups:
+        recipients = [r for r in recipients if (r[11] or '').lower() in groups]
 
     if not recipients:
         return jsonify({"ok": False, "error": "No matching members found."}), 404
 
     sent_summary = []
+    for member in recipients:
+        # Adapt to your DB schema
+        discord_id = member[0]
+        first_name = member[2] if len(member) > 2 else ""
+        last_name = member[3] if len(member) > 3 else ""
+        email = member[4] if len(member) > 4 else ""
+        mobile = member[5] if len(member) > 5 else ""
 
-    for r in recipients:
-        discord_id = r[0]
-        first_name = r[2] or ""
-        last_name  = r[3] or ""
-        email_addr = r[4] or ""
-        mobile_num = r[5] or ""
-
-        # Build per-recipient links/placeholders
-        msg = body_tpl
-
-        # {update_link}
-        if include_request_details:
-            token = generate_join_token(discord_id)
-            update_link = f"{domain}/update/{token}"
-            msg = msg.replace("{update_link}", update_link)
-
-        # {pay_link}
+        message_text = body
         if include_paylink and paypal_base:
-            pay_link = f"{paypal_base}/{discord_id}"
-            # Replace placeholder if present; otherwise append neatly
-            if "{pay_link}" in msg:
-                msg = msg.replace("{pay_link}", pay_link)
-            else:
-                msg = f"{msg}\n\n💳 Pay Now: {pay_link}"
+            message_text += f"\n\n💳 Pay Now: {paypal_base}/{discord_id}"
 
         sent_channels = []
 
-        # Discord DM
+        # ───────────── Discord ─────────────
         if discord_enabled and use_discord:
             try:
                 member_obj = None
                 for g in bot.guilds:
-                    m_obj = g.get_member(int(discord_id)) if str(discord_id).isdigit() else None
+                    m_obj = g.get_member(int(discord_id))
                     if m_obj:
-                        member_obj = m_obj; break
+                        member_obj = m_obj
+                        break
                 if member_obj:
                     asyncio.run_coroutine_threadsafe(
-                        member_obj.send(f"**{subject}**\n\n{msg}"),
-                        bot.loop
+                        member_obj.send(f"**{subject}**\n\n{message_text}"), bot.loop
                     )
                     sent_channels.append("Discord")
             except Exception as e:
                 print(f"⚠️ Discord DM failed for {discord_id}: {e}")
 
-        # Email
-        if email_enabled and use_email and email_addr:
+        # ───────────── Email ─────────────
+        if email_enabled and use_email and email:
             try:
-                send_email(subject, msg, to=email_addr)
+                send_email(subject, message_text, to=email)
                 sent_channels.append("Email")
             except Exception as e:
-                print(f"⚠️ Email send failed for {email_addr}: {e}")
+                print(f"⚠️ Email send failed for {email}: {e}")
 
-        # SMS
-        if sms_enabled and use_sms and mobile_num:
+        # ───────────── SMS ─────────────
+        if sms_enabled and use_sms and mobile:
             try:
-                send_sms(mobile_num, msg)
+                send_sms(mobile, message_text)
                 sent_channels.append("SMS")
             except Exception as e:
-                print(f"⚠️ SMS send failed for {mobile_num}: {e}")
+                print(f"⚠️ SMS send failed for {mobile}: {e}")
 
         if sent_channels:
-            sent_summary.append({
-                "id": discord_id,
-                "name": f"{first_name} {last_name}".strip() or str(discord_id),
-                "via": sent_channels
-            })
+            sent_summary.append(
+                {"member": f"{first_name} {last_name}".strip() or discord_id, "channels": sent_channels}
+            )
+
+    print(f"📢 Sent {len(sent_summary)} messages via unified system.")
+    for s in sent_summary:
+        print(f" → {s['member']}: {', '.join(s['channels'])}")
 
     return jsonify({
         "ok": True,
         "sent_count": len(sent_summary),
-        "sent": sent_summary[:20]  # include small preview (first 20) so you can see examples
+        "sent_via": [s["channels"] for s in sent_summary],
     })
 
 
@@ -2116,7 +2097,6 @@ def api_roles():
         cfg.get("Discord", "TrialRole",    fallback="Trial").strip(),
         cfg.get("Discord", "PayerRole",    fallback="Payer").strip(),
         cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip(),
-        cfg.get("Discord", "AdminRole", fallback="Admin").strip(),
         "Expired"
     ]
     return jsonify({"ok": True, "roles": roles})

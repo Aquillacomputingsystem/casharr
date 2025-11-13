@@ -87,8 +87,7 @@
       <textarea id="dmBody" rows="8" placeholder="Type your message…" class="input-wide"></textarea>
 
       <div class="options-row">
-       <label><input type="checkbox" id="dmPayLink"> Include PayLink</label>
-       <label><input type="checkbox" id="dmRequestDetails"> Request details link</label>
+        <label><input type="checkbox" id="dmPayLink"> Include PayLink</label>
       </div>
 
       <div class="channel-select">
@@ -447,68 +446,6 @@ $body.addEventListener("change", async (e) => {
 });
 
 </script>
-<script>
-// …existing DM modal vars…
-const dmBodyEl = document.getElementById('dmBody');
-const dmSubjectEl = document.getElementById('dmSubject');
-const dmPayLinkEl = document.getElementById('dmPayLink');
-const dmRequestDetailsEl = document.getElementById('dmRequestDetails');
 
-// Prefill when “Request details link” is toggled on
-dmRequestDetailsEl.addEventListener('change', () => {
-  if (dmRequestDetailsEl.checked) {
-    // Only prefill if empty (or was previously auto-filled)
-    const wasEmpty = dmBodyEl.value.trim() === '';
-    const looksAuto = dmBodyEl.value.includes('{update_link}');
-    if (wasEmpty || looksAuto) {
-      dmSubjectEl.value = 'Please confirm your details';
-      dmBodyEl.value =
-`Hi,
-
-We’re updating our Casharr records.
-Please click the unique link below to confirm your details:
-
-{update_link}
-
-Thanks!`;
-    }
-  }
-});
-
-async function sendDM(){
-  const subject = dmSubjectEl.value.trim();
-  const body = dmBodyEl.value.trim();
-  const includePayLink = dmPayLinkEl.checked;
-  const includeRequestDetails = dmRequestDetailsEl.checked;
-  const discord = document.getElementById('dmDiscord').checked;
-  const email = document.getElementById('dmEmail').checked;
-  const sms = document.getElementById('dmSMS').checked;
-
-  let groups=[];
-  if(isBroadcast){
-    document.querySelectorAll('.groupCheck:checked').forEach(c=>groups.push(c.value));
-    if(!groups.length){alert('Select at least one member group.');return;}
-  }
-
-  try{
-    const res=await fetch(`/api/message/${dmTarget}`,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        subject, body,
-        includePayLink,
-        includeRequestDetails,
-        discord, email, sms,
-        groups
-      })
-    });
-    const data=await res.json();
-    alert(data.ok
-      ? `✅ Sent ${data.sent_count} messages.`
-      : `⚠️ ${data.error}`);
-    closeDMModal();
-  }catch(err){alert('⚠️ '+err.message);}
-}
-</script>
 {% endblock %}
 
