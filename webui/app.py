@@ -931,6 +931,60 @@ def api_members():
     # 🟢 Return compiled JSON list
     return jsonify({"ok": True, "members": out})
 
+@webui.route("/api/member/<discord_id>", methods=["POST"])
+def api_member_update(discord_id):
+    payload = request.get_json(silent=True) or {}
+
+    first = payload.get("first_name", "").strip()
+    last = payload.get("last_name", "").strip()
+    email = payload.get("email", "").strip().lower()
+    mobile = payload.get("mobile", "").strip()
+    discord_tag = payload.get("discord_tag", "").strip()
+
+    try:
+        from database import save_member
+        save_member(
+            discord_id=str(discord_id),
+            first_name=first,
+            last_name=last,
+            email=email,
+            mobile=mobile,
+            discord_tag=discord_tag,
+            origin="manual"
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@webui.route("/api/member", methods=["POST"])
+def api_member_save():
+    """Create or update a member from the WebUI modal."""
+    data = request.get_json(silent=True) or {}
+
+    discord_id = (data.get("discord_id") or "").strip()
+    discord_tag = (data.get("discord_tag") or "").strip()
+    first = (data.get("first_name") or "").strip()
+    last = (data.get("last_name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    mobile = (data.get("mobile") or "").strip()
+
+    if email == "" and discord_id == "":
+        return jsonify({"ok": False, "error": "Email or Discord ID required"}), 400
+
+    try:
+        from database import save_member
+        save_member(
+            discord_id=discord_id or "noid",
+            discord_tag=discord_tag,
+            first_name=first,
+            last_name=last,
+            email=email,
+            mobile=mobile,
+            origin="manual"
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @webui.route("/api/member/<discord_id>/role", methods=["POST"])
 def api_member_set_role(discord_id):
