@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="payment" style="max-width:600px;margin:40px auto;">
+  <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:20px;">💳 Choose a PayPal Payment Option</h2>
+
+  <p style="margin-bottom:20px;font-size:1rem;color:var(--text-muted);">
+    Select a subscription duration below. You will be redirected to PayPal.  
+    Please keep the Discord ID in the note so we can match your payment.
+  </p>
+
+  <div class="card" style="padding:20px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev);box-shadow:var(--shadow-sm);">
+    <h3 style="font-size:1.3rem;margin-bottom:14px;">PayPal Options</h3>
+
+    <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px;">
+      <li>
+        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/6?note={{ discord_id }}">
+          1 Month — $6.00
+        </a>
+      </li>
+
+      <li>
+        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/15?note={{ discord_id }}">
+          3 Months — $15.00
+        </a>
+      </li>
+
+      <li>
+        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/29?note={{ discord_id }}">
+          6 Months — $29.00
+        </a>
+      </li>
+
+      <li>
+        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/55?note={{ discord_id }}">
+          12 Months — $55.00
+        </a>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<style>
+  .pay-btn {
+    display:block;
+    padding:12px 16px;
+    background:var(--accent);
+    color:white;
+    text-align:center;
+    border-radius:8px;
+    font-weight:600;
+    text-decoration:none;
+    transition:0.15s;
+  }
+  .pay-btn:hover {
+    filter:brightness(1.1);
+  }
+</style>
+
+{% endblock %}

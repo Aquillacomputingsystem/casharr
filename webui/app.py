@@ -1345,8 +1345,10 @@ def api_message(target):
         mobile = member[5] if len(member) > 5 else ""
 
         message_text = body
-        if include_paylink and paypal_base:
-            message_text += f"\n\n💳 Pay Now: {paypal_base}/{discord_id}"
+        # Proper pay link (your own pay page)
+        if include_paylink:
+            domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+            message_text += f"\n\n💳 Pay Now: {domain}/pay/{discord_id}"
 
         sent_channels = []
 
@@ -2143,3 +2145,7 @@ def api_roles():
         "Expired"
     ]
     return jsonify({"ok": True, "roles": roles})
+
+@webui.route("/pay/<discord_id>")
+def pay_page(discord_id):
+    return render_template("payment.html", discord_id=discord_id)
