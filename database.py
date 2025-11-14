@@ -80,7 +80,15 @@ def init_db():
             c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
         except Exception:
             pass
-
+# Plex username column
+    new_columns = [
+        ("plex_username", "TEXT")
+    ]
+    for col_name, col_def in new_columns:
+        try:
+            c.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
+        except Exception:
+            pass
     # ───── Onboarding columns ─────
     new_columns = [
         ("join_token", "TEXT"),
@@ -323,17 +331,17 @@ def get_all_members():
 def get_member(discord_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        SELECT discord_id, discord_tag, first_name, last_name, email, mobile,
-               invite_sent_at, trial_start, trial_end, had_trial,
-               paid_until, trial_reminder_sent_at, paid_reminder_sent_at,
-               used_promo, referrer_id, is_referrer, referral_paid, origin, discord_roles
-        FROM members WHERE discord_id=?
-    """, (str(discord_id),))
-    row = c.fetchone()
-    conn.close()
-    return row
 
+    # Fetch *all* columns including plex_username
+    c.execute("PRAGMA table_info(members)")
+    cols = [row[1] for row in c.fetchall()]
+
+    # Select columns dynamically
+    c.execute(f"SELECT {', '.join(cols)} FROM members WHERE discord_id=?", (str(discord_id),))
+    row = c.fetchone()
+
+    conn.close()
+    return dict(zip(cols, row)) if row else None
 
 def get_member_by_email(email: str):
     conn = sqlite3.connect(DB_PATH)

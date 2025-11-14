@@ -298,8 +298,18 @@ def api_sync_plex():
 
             existing = get_member_by_email(email)
             if existing:
+                # Update ONLY plex_username for existing users
+                conn = sqlite3.connect("data/members.db")
+                c = conn.cursor()
+                c.execute(
+                    "UPDATE members SET plex_username=? WHERE lower(email)=lower(?)",
+                    (plex_username, email),
+                )
+                conn.commit()
+                conn.close()
+
                 skipped += 1
-                print(f"[Plex Sync] Skipped existing user {email}")
+                print(f"[Plex Sync] Updated existing user {email} (Plex name: {plex_username})")
                 continue
 
             # Don’t store Plex username in first_name or last_name
@@ -310,19 +320,12 @@ def api_sync_plex():
                 roles=lifetime_role
             )
 
-            # Store Plex username and enforce correct status/origin
+            # Store Plex username for new users
             conn = sqlite3.connect("data/members.db")
             c = conn.cursor()
             c.execute(
-                """
-                UPDATE members
-                SET plex_username=?,
-                    status=?,
-                    discord_roles=?,
-                    origin='sync'
-                WHERE lower(email)=lower(?)
-                """,
-                (plex_username, lifetime_role, lifetime_role, email),
+                "UPDATE members SET plex_username=? WHERE lower(email)=lower(?)",
+                (plex_username, email),
             )
             conn.commit()
             conn.close()
@@ -953,6 +956,7 @@ def api_members():
             "origin": origin or "",
             "status": final_status,
             "referrer_id": r[14] if len(r) > 14 else None,
+            "plex_username": r[19] if len(r) > 19 else None   # 🟢 ADD THIS
         })
 
     # 🟢 Return compiled JSON list
@@ -1034,15 +1038,28 @@ def api_member_set_role(discord_id):
 @webui.route("/api/member/<discord_id>", methods=["GET"])
 def api_member_get(discord_id):
     """Return full member details for modal view."""
+    import sqlite3
+
     member = get_member(discord_id)
     if not member:
         return jsonify({"ok": False, "error": "Member not found"}), 404
-    fields = [
-        "discord_id","discord_tag","first_name","last_name","email",
-        "mobile","join_date","trial_start","trial_end","paid_until",
-        "role","referrer_id","origin","status"
-    ]
-    data = {fields[i]: member[i] if i < len(member) else None for i in range(len(fields))}
+
+    # Read actual DB column order dynamically
+    conn = sqlite3.connect("data/members.db")
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(members)")
+    cols = [row[1] for row in c.fetchall()]
+    conn.close()
+
+    # Build output using REAL column names (member is already a dict!)
+    data = {col: member.get(col) for col in cols}
+
+    # Ensure UI fields always exist for the modal
+    for key in ["discord_id","discord_tag","first_name","last_name","email","mobile",
+                "trial_start","trial_end","paid_until","referrer_id",
+                "origin","status","plex_username"]:
+        data.setdefault(key, None)
+
     return jsonify({"ok": True, "member": data})
 
 @webui.route("/api/member/<discord_id>/delete", methods=["POST"])
