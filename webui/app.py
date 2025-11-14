@@ -1270,7 +1270,7 @@ def api_message(target):
     import asyncio
     from helpers.emailer import send_email
     from helpers.sms import send_sms
-    from database import get_member, get_all_members
+    from database import get_member, get_all_members, get_member_by_email
     from bot import bot
     import configparser, os
 
@@ -1295,17 +1295,38 @@ def api_message(target):
     if not any([use_discord, use_email, use_sms]):
         return jsonify({"ok": False, "error": "No channels selected."}), 400
 
-    # ── Retrieve target(s)
-# Collect recipients
+    # ────────────────────────────────
+    # Resolve target → actual member(s)
+    # ────────────────────────────────
     if target == "all":
         recipients = get_all_members()
     else:
+        recipients = []
+
+        # 1️⃣ Lookup by discord_id exact match
         m = get_member(target)
+
+        # 2️⃣ If discord_id starts with 'plex:' remove prefix and try email match
+        if not m and str(target).startswith("plex:"):
+            email_only = target.split("plex:",1)[1].strip()
+            m = get_member_by_email(email_only)
+
+        # 3️⃣ Lookup by email directly
         if not m:
-            # fallback: lookup by email if target is email
-            from database import get_member_by_email
             m = get_member_by_email(target)
-        recipients = [m] if m else []
+
+        # 4️⃣ Lookup by discord_id case-insensitive
+        if not m:
+            t = str(target).strip().lower()
+            for row in get_all_members():
+                if str(row[0]).strip().lower() == t:
+                    m = row
+                    break
+
+        # 5️⃣ If matched, wrap it for processing
+        if m:
+            recipients = [m]
+
 
     # Filter by groups if given
     if groups:
