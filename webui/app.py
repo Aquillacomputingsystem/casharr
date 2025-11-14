@@ -1797,7 +1797,7 @@ def api_tasks_run():
 # ─────────────────────────────
 # SMTP Test Endpoint (plain text)
 # ─────────────────────────────
-@webui.route("/apo/test_email", methods=["POST"])
+@webui.route("/api/test_email", methods=["POST"])
 def api_test_email():
     try:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
