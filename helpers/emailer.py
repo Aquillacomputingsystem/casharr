@@ -23,8 +23,10 @@ def send_email(subject, body, to=None):
         return False
 
     msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = user
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
+
+    msg["Subject"] = subject.replace("Casharr", SERVER_NAME)
+    msg["From"] = f"{SERVER_NAME} <{user}>"
     msg["To"] = to
     msg.set_content(body)
 

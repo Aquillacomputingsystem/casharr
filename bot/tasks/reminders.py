@@ -68,7 +68,8 @@ async def send_renewal_reminders():
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-
+    
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=REMINDER_DAYS)
     due = get_all_for_reminders()
@@ -96,7 +97,7 @@ async def send_renewal_reminders():
         # ========== TRIAL REMINDER ==========
         t_end = parse_iso(trial_end)
         if t_end and now <= t_end <= horizon and not trial_rem_at:
-            subject = "Casharr Trial Reminder"
+            subject = f"{SERVER_NAME} Trial Reminder"
             msg = TRIAL_REMINDER_MSG.format(
                 date=t_end.strftime("%Y-%m-%d"),
                 m1=pay_page(discord_id, "1"),
@@ -115,7 +116,7 @@ async def send_renewal_reminders():
         # ========== PAID REMINDER ==========
         p_end = parse_iso(paid_until)
         if p_end and now <= p_end <= horizon and not paid_rem_at:
-            subject = "Casharr Subscription Renewal Reminder"
+            subject = f"{SERVER_NAME} Subscription Renewal Reminder"
             msg = PAID_REMINDER_MSG.format(
                 date=p_end.strftime("%Y-%m-%d"),
                 m1=pay_page(discord_id, "1"),

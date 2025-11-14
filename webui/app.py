@@ -147,10 +147,10 @@ def dashboard():
     access_mode = cfg.get("AccessMode", "Mode", fallback="Manual").strip()
 
     stats = {"total": total, "active_trials": active_trials, "active_payers": active_payers, "expired": expired}
-
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     return render_template(
         "dashboard.html",
-        title="Dashboard | Casharr",
+        title=f"Dashboard | {SERVER_NAME}",
         stats=stats,
         trial_days=trial_days,
         referral_enabled=referral_enabled,
@@ -395,6 +395,9 @@ def api_log_content(logname):
 # ───────────────────────────────
 @webui.route("/login", methods=["GET", "POST"])
 def login():
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     user, pw_hash = get_admin_credentials()
     if not user or not pw_hash:
         return redirect(url_for("webui.dashboard"))
@@ -413,7 +416,8 @@ def login():
             return redirect(next_url)
         else:
             error = "❌ Invalid username or password."
-    return render_template("login.html", title="Login | Casharr", error=error)
+    
+    return render_template("login.html", title=f"Login | {SERVER_NAME}", error=error)
 
 
 @webui.route("/logout")
@@ -593,6 +597,15 @@ def config_settings():
         if sec not in cfg: cfg[sec] = {}
 
     if request.method == "POST":
+        
+        # -------------------------
+        # GENERAL → SERVER NAME
+        # -------------------------
+        if "General" not in cfg:
+            cfg["General"] = {}
+
+        cfg["General"]["ServerName"] = request.form.get("ServerName", "").strip()
+
         cfg["AccessMode"]["Mode"] = request.form.get("AccessMode", "Auto").capitalize()
 
         cfg["System"]["ExternalAddress"] = request.form.get("ExternalAddress", "").strip()
@@ -646,10 +659,13 @@ def config_settings():
     sms_token = cfg.get("SMS", "Token", fallback="")
     sms_from = cfg.get("SMS", "From", fallback="Casharr")
 
+    server_name = cfg.get("General", "ServerName", fallback="My Plex Server")
+
     return render_template(
         "config_settings.html",
         title="Config | Settings",
         access_mode=access_mode,
+        server_name=server_name,
         ext_address=ext_address,
         port=port,
         allow_external=allow_external,
@@ -707,7 +723,11 @@ def config_discord():
 # ───────────────────────────────
 @webui.route("/members")
 def members():
-    return render_template("members.html", title="Members | Casharr")
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
+    return render_template("members.html", title=f"Members | {SERVER_NAME}")
+
 
 # ───────────────────────────────
 # Discord Role & Member Helpers
@@ -1141,8 +1161,9 @@ def api_invite():
     img.save(buf, format="PNG")
     qr_b64 = base64.b64encode(buf.getvalue()).decode()
 
-    subject = "You're invited to join Casharr!"
-    msg = f"Welcome!\nPlease complete your setup:\n{join_url}"
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
+    subject = f"You're invited to join {SERVER_NAME}!"
+    msg = f"Welcome to {SERVER_NAME}!\nPlease complete your setup:\n{join_url}"
 
     # Send notifications using existing systems
     if email:
@@ -1214,10 +1235,10 @@ def join_page(token):
             except Exception as e:
                 print(f"⚠️ SMS notify failed: {e}")
 
-        return render_template("join_success.html", title="Welcome | Casharr")
-
+        return render_template("join_success.html", title=f"Welcome | {SERVER_NAME}")
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     return render_template("join.html",
-                           title="Join | Casharr",
+                           title=f"Join | {SERVER_NAME}",
                            token=token,
                            discord_enabled=discord_enabled,
                            discord_invite=discord_invite)
@@ -1283,7 +1304,8 @@ def api_message(target):
 
     # ── Parse incoming data
     data = request.get_json(silent=True) or {}
-    subject = data.get("subject", "Message from Casharr Admin").strip()
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
+    subject = data.get("subject", f"Message from {SERVER_NAME} Admin").strip()
     body = data.get("body", "").strip()
     include_paylink = data.get("includePayLink", False)
     use_discord = data.get("discord", False)

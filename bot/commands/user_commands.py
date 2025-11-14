@@ -8,6 +8,13 @@ from bot import (
 )
 from database import is_promo_eligible, has_used_promo, get_referrals, get_referrer
 
+import configparser
+
+def get_server_name():
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    return cfg.get("General", "ServerName", fallback="My Plex Server")
+
 # ────────────────────────────────
 # /status COMMAND
 # ────────────────────────────────
@@ -188,21 +195,22 @@ async def paylink(interaction: discord.Interaction, months: int, member: discord
     # ─────────────────────────────
     try:
         dm = await target.create_dm()
-        embed = discord.Embed(title="💳 PayPal Payment Link", color=discord.Color.gold())
+        SERVER_NAME = get_server_name()
+        embed = discord.Embed(title=f"💳 {SERVER_NAME} — Payment Link", color=discord.Color.gold())
         embed.add_field(name="Duration", value=f"{months} month(s)", inline=True)
         embed.add_field(name="Price", value=f"{price} {currency}", inline=True)
         if eligible_for_promo:
             embed.add_field(name="Promotion", value=note, inline=False)
         embed.add_field(name="Payment Link", value=f"[Click here to pay]({link})", inline=False)
-        embed.set_footer(text="Once payment is confirmed, your role will automatically update.")
+        embed.set_footer(text=f"{SERVER_NAME}: Your role updates automatically after payment.")
         await dm.send(embed=embed)
 
         await interaction.response.send_message(
-            f"✅ Payment link sent to {target.mention}'s DMs.",
+            f"✅ {SERVER_NAME} payment link sent to {target.mention}'s DMs.",
             ephemeral=True
         )
 
-        log_msg = f"💳 Payment link ({months}m) sent to {target.mention}."
+        log_msg = f"💳 [{SERVER_NAME}] Payment link ({months}m) sent to {target.mention}."
         if eligible_for_promo:
             log_msg += " 🎁 (Promo pricing applied)"
         await send_admin(log_msg)
@@ -218,9 +226,11 @@ async def paylink(interaction: discord.Interaction, months: int, member: discord
 # ────────────────────────────────
 @bot.tree.command(name="referral", description="Generate your personal one-time referral invite (sent via DM).")
 async def referral(interaction: discord.Interaction):
+    SERVER_NAME = get_server_name()
     """Allow members to request their referral link only in the designated channel, then DM it to them."""
     user = interaction.user
     guild = interaction.guild or bot.guilds[0]
+
 
     # Restrict to a specific channel
     allowed_channel_id = int(config["Discord"].get("ReferralChannelID", "0"))
@@ -254,16 +264,18 @@ async def referral(interaction: discord.Interaction):
     qr_path = f"exports/referral_{user.id}.png"
     qrcode.make(invite_url).save(qr_path)
 
+    SERVER_NAME = get_server_name()
+
     embed = discord.Embed(
-        title="🤝 Your Casharr Referral Invite",
-        description=(
-            f"Here’s your personal one-time referral invite! "
-            f"Share this with friends — when they join and subscribe, you’ll earn bonus days.\n\n"
-            f"**Invite Link:** [Click to Join]({invite_url})"
-        ),
-        color=discord.Color.green(),
-    )
-    embed.set_footer(text="Each invite is tracked automatically for referral rewards.")
+    title=f"🤝 Your {SERVER_NAME} Referral Invite",
+    description=(
+        f"Here’s your personal one-time referral invite for **{SERVER_NAME}**! "
+        f"Share this with friends — when they join and subscribe, you’ll earn bonus days.\n\n"
+        f"**Invite Link:** [Click to Join]({invite_url})"
+    ),
+    color=discord.Color.green(),
+)
+    embed.set_footer(text=f"{SERVER_NAME}: Each referral is tracked for rewards.")
     file = discord.File(qr_path, filename=f"referral_{user.id}.png")
     embed.set_image(url=f"attachment://referral_{user.id}.png")
 
@@ -272,7 +284,7 @@ async def referral(interaction: discord.Interaction):
         dm = await user.create_dm()
         await dm.send(embed=embed, file=file)
         await interaction.followup.send("✅ Check your DMs for your personal referral invite!", ephemeral=True)
-        await send_admin(f"🔗 Referral invite generated for {user.mention}: {invite_url}")
+        await send_admin(f"🔗 [{SERVER_NAME}] Referral invite generated for {user.mention}: {invite_url}")
     except Exception as e:
         await interaction.followup.send(
             f"⚠️ I couldn’t DM you ({type(e).__name__}). Please check your privacy settings.",

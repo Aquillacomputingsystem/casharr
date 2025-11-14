@@ -8,6 +8,18 @@
   </p>
 
   <form method="post" class="config-form">
+    <!-- ────── GENERAL SERVER SETTINGS ────── -->
+    <div class="config-section">
+      <h3>🎬 Plex Server Identity</h3>
+      <div class="form-grid">
+        <label>
+          <span>Server Name</span>
+          <input type="text" name="ServerName" value="{{ server_name }}" placeholder="Your Plex Server Name">
+        </label>
+      </div>
+      <p class="hint">This name will appear in emails, SMS, Discord DMs, and all public pages instead of ‘Casharr’.</p>
+    </div>
+    
     <!-- ────── GENERAL AUTOMATION ────── -->
     <div class="config-section">
       <h3>🧠 Access & Automation</h3>

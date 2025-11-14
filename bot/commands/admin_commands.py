@@ -56,7 +56,7 @@ async def _collect_member_details(member: discord.Member, resume_stage: int = 0)
         return False
 
     await dm.send(
-        "👋 Thanks for helping update your Casharr profile."
+        "👋 Thanks for helping update your profile."
         "\nYou can reply anytime — this chat stays open until all details are received."
         "\nReply with `skip` to keep any existing value."
     )

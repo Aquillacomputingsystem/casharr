@@ -18,7 +18,8 @@ def send_sms(to_number: str, message: str) -> bool:
         return False
     gateway = cfg["SMS"].get("GatewayURL", "").strip()
     token = cfg["SMS"].get("Token", "").strip()
-    sender = cfg["SMS"].get("From", "Casharr")
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
+    sender = cfg["SMS"].get("From", SERVER_NAME)
 
     if not gateway or not token or not to_number:
         print("⚠️ SMS config incomplete — check [SMS] section.")
