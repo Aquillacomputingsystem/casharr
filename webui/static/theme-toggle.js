@@ -16,8 +16,8 @@
     localStorage.setItem('casharr_theme', name.toLowerCase());
   }
 
-  // Initial load (persisted)
-  const saved = (localStorage.getItem('casharr_theme') || 'light').toLowerCase();
+  // Initial load (DEFAULT: DARK unless saved)
+  const saved = (localStorage.getItem('casharr_theme') || 'dark').toLowerCase();
   applyTheme(saved === 'dark' ? THEMES.DARK : THEMES.LIGHT);
 
   // Handler

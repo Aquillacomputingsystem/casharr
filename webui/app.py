@@ -82,7 +82,14 @@ def login_required(f):
 
 @webui.before_request
 def enforce_login_on_first_visit():
-    public_routes = ["webui.login", "webui.logout", "webui.static"]
+    public_routes = [
+        "webui.login",
+        "webui.logout",
+        "webui.static",
+        "webui.join_page",
+        "webui.referral_portal",
+        "webui.pay_page"
+    ]
     if request.endpoint in public_routes:
         return
     user, pw_hash = get_admin_credentials()
