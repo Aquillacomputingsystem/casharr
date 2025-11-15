@@ -2035,23 +2035,23 @@ def api_member_extend_trial(discord_id):
         return jsonify({"ok": False, "error": str(e)}), 500
     
 # ───────────────────────────────
-# 🏷️ TOGGLE MEMBER STATUS (Trial/Payer/Lifetime/Expired)
+# 🏷️ TOGGLE MEMBER STATUS (Initial / Trial / Payer / Lifetime)
 # ───────────────────────────────
 @webui.route("/api/member/<discord_id>/set_status", methods=["POST"])
 def api_member_set_status(discord_id):
     """
-    Update a member's status (Trial / Payer / Lifetime / Expired)
+    Update a member's status (one of the 4 Discord roles from config)
     and sync with Discord if enabled.
     """
     from database import update_member_status
-    import configparser, os, asyncio
+    import configparser, os
 
     data = request.get_json(silent=True) or {}
     new_status = data.get("status", "").strip()
     if not new_status:
         return jsonify({"ok": False, "error": "No status provided."}), 400
 
-    # Save status in DB
+    # Save the status in DB exactly as chosen in UI
     try:
         update_member_status(discord_id, new_status)
         logger.info(f"✅ Updated DB status for {discord_id}: {new_status}")
@@ -2071,24 +2071,28 @@ def api_member_set_status(discord_id):
     LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Patreon").strip()
 
     if not discord_enabled:
-        return jsonify({"ok": True, "message": f"Status updated (Discord disabled)."})
+        return jsonify({"ok": True, "message": f"Status updated (Discord disabled)."}), 200
 
-    # ─────────────────────────────
-    # Discord Sync (using adapter)
-    # ─────────────────────────────
-    from bot.discord_adapter import apply_role
-
-    role_map = {
-        "trial": TRIAL_ROLE,
-        "payer": PAYER_ROLE,
-        "lifetime": LIFETIME_ROLE,
-        "expired": INITIAL_ROLE,
-        "initial": INITIAL_ROLE
+    # Normalise the chosen status to one of the 4 config roles
+    ns_lower = new_status.lower()
+    status_map = {
+        INITIAL_ROLE.lower():  INITIAL_ROLE,
+        TRIAL_ROLE.lower():    TRIAL_ROLE,
+        PAYER_ROLE.lower():    PAYER_ROLE,
+        LIFETIME_ROLE.lower(): LIFETIME_ROLE,
+        # Optional aliases:
+        "expired":             INITIAL_ROLE,
     }
 
-    target_role = role_map.get(new_status.lower(), INITIAL_ROLE)
+    target_role = status_map.get(ns_lower)
+    if not target_role:
+        # Unknown status → safest fallback is Initial
+        target_role = INITIAL_ROLE
+        logger.warning(f"⚠️ Unknown status '{new_status}', defaulting to {INITIAL_ROLE}.")
 
+    # Discord Sync via adapter (config-driven)
     try:
+        from bot.discord_adapter import apply_role
         apply_role(int(discord_id), target_role)
         logger.info(f"🪄 Applied Discord role {target_role} to {discord_id}")
     except Exception as e:
@@ -2108,7 +2112,6 @@ def api_roles():
         cfg.get("Discord", "TrialRole",    fallback="Trial").strip(),
         cfg.get("Discord", "PayerRole",    fallback="Payer").strip(),
         cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip(),
-        "Expired"
     ]
     return jsonify({"ok": True, "roles": roles})
 
