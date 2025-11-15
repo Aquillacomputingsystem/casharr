@@ -89,6 +89,7 @@ def enforce_login_on_first_visit():
         "webui.join_page",
         "webui.referral_portal",
         "webui.pay_page"
+        "webui.update_details" 
     ]
     if request.endpoint in public_routes:
         return
@@ -1228,14 +1229,6 @@ def referral_portal():
 # ─────────────────────────────
 @webui.route("/api/message/<target>", methods=["POST"])
 def api_message(target):
-    data = request.get_json(silent=True) or {}
-    groups = data.get("groups", [])
-
-    """
-    Unified messaging endpoint for WebUI.
-    Sends messages through any enabled notification system (Discord, Email, SMS).
-    Target may be a single member's Discord ID or 'all' for broadcast.
-    """
     import asyncio
     from helpers.emailer import send_email
     from helpers.sms import send_sms
@@ -1245,17 +1238,20 @@ def api_message(target):
 
     # ── Parse incoming data
     data = request.get_json(silent=True) or {}
+    groups = data.get("groups", [])
+
+    # ── Load configuration FIRST (fixes cfg undefined)
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
     SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     subject = data.get("subject", f"Message from {SERVER_NAME} Admin").strip()
     body = data.get("body", "").strip()
+
     include_paylink = data.get("includePayLink", False)
     use_discord = data.get("discord", False)
     use_email = data.get("email", False)
     use_sms = data.get("sms", False)
-
-    # ── Load configuration
-    cfg = configparser.ConfigParser()
-    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
 
     paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
     discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=True)
@@ -1276,12 +1272,12 @@ def api_message(target):
         # 1️⃣ Lookup by discord_id exact match
         m = get_member(target)
 
-        # 2️⃣ If discord_id starts with 'plex:' remove prefix and try email match
+        # 2️⃣ If discord_id starts with "plex:" → email lookup
         if not m and str(target).startswith("plex:"):
-            email_only = target.split("plex:",1)[1].strip()
+            email_only = target.split("plex:", 1)[1].strip()
             m = get_member_by_email(email_only)
 
-        # 3️⃣ Lookup by email directly
+        # 3️⃣ Lookup by email
         if not m:
             m = get_member_by_email(target)
 
@@ -1293,36 +1289,48 @@ def api_message(target):
                     m = row
                     break
 
-        # 5️⃣ If matched, wrap it for processing
         if m:
             recipients = [m]
 
-
-    # Filter by groups if given
+    # Filter by groups
     if groups:
         recipients = [r for r in recipients if (r[11] or "").lower() in groups]
 
     if not recipients:
         return jsonify({"ok": False, "error": "No matching members found."}), 404
 
+    # ────────────────────────────────
+    # Send messages
+    # ────────────────────────────────
     sent_summary = []
+
+    def extract(member, index, key):
+        if isinstance(member, dict):
+            return member.get(key)
+        if isinstance(member, (list, tuple)):
+            try:
+                return member[index]
+            except:
+                return None
+        return None
+
     for member in recipients:
-        # Adapt to your DB schema
-        discord_id = member[0]
-        first_name = member[2] if len(member) > 2 else ""
-        last_name = member[3] if len(member) > 3 else ""
-        email = member[4] if len(member) > 4 else ""
-        mobile = member[5] if len(member) > 5 else ""
+        discord_id = extract(member, 0, "discord_id")
+        first_name = extract(member, 2, "first_name") or ""
+        last_name  = extract(member, 3, "last_name") or ""
+        email      = extract(member, 4, "email")
+        mobile     = extract(member, 5, "mobile")
 
         message_text = body
-        # Proper pay link (your own pay page)
+
+        # Add pay link
         if include_paylink:
             domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
             message_text += f"\n\n💳 Pay Now: {domain}/pay/{discord_id}"
 
         sent_channels = []
 
-        # ───────────── Discord ─────────────
+        # Discord
         if discord_enabled and use_discord:
             try:
                 member_obj = None
@@ -1339,28 +1347,29 @@ def api_message(target):
             except Exception as e:
                 print(f"⚠️ Discord DM failed for {discord_id}: {e}")
 
-        # ───────────── Email ─────────────
+        # Email
         if email_enabled and use_email and email:
             try:
                 send_email(subject, message_text, to=email)
                 sent_channels.append("Email")
             except Exception as e:
-                print(f"⚠️ Email send failed for {email}: {e}")
+                print(f"⚠️ Email failed for {email}: {e}")
 
-        # ───────────── SMS ─────────────
+        # SMS
         if sms_enabled and use_sms and mobile:
             try:
                 send_sms(mobile, message_text)
                 sent_channels.append("SMS")
             except Exception as e:
-                print(f"⚠️ SMS send failed for {mobile}: {e}")
+                print(f"⚠️ SMS failed for {mobile}: {e}")
 
         if sent_channels:
             sent_summary.append(
-                {"member": f"{first_name} {last_name}".strip() or discord_id, "channels": sent_channels}
+                {"member": f"{first_name} {last_name}".strip() or discord_id,
+                 "channels": sent_channels}
             )
 
-    print(f"📢 Sent {len(sent_summary)} messages via unified system.")
+    print(f"📢 Sent {len(sent_summary)} messages.")
     for s in sent_summary:
         print(f" → {s['member']}: {', '.join(s['channels'])}")
 
@@ -2118,3 +2127,40 @@ def api_roles():
 @webui.route("/pay/<discord_id>")
 def pay_page(discord_id):
     return render_template("payment.html", discord_id=discord_id)
+
+@webui.route("/update", methods=["GET", "POST"])
+def update_details():
+    from database import get_member_by_email, save_member
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        first = request.form.get("first_name", "").strip()
+        last = request.form.get("last_name", "").strip()
+        mobile = request.form.get("mobile", "").strip()
+
+        member = get_member_by_email(email)
+
+        if not member:
+            return render_template("update.html", error="Email not found — make sure it's the Plex email."), 404
+
+        discord_id = member[0]  # discord_id is index 0
+
+        save_member(
+            discord_id,
+            first_name=first,
+            last_name=last,
+            email=email,
+            mobile=mobile,
+            origin="update"
+        )
+
+        return render_template("update_success.html")
+
+    return render_template("update.html")
+
+@webui.route("/api/site_domain")
+def api_site_domain():
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    domain = cfg.get("Site", "Domain", fallback="http://localhost:5000")
+    return jsonify({"domain": domain.rstrip("/")})

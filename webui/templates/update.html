@@ -1,0 +1,33 @@
+{% extends "base_public.html" %}
+{% block content %}
+<section class="join">
+  <h2>🔄 Update Your Details</h2>
+
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  <p>Please enter the <strong>Plex email</strong> associated with your account.</p>
+
+  <form method="POST">
+
+    <label>Email (Plex account email)
+      <input name="email" type="email" required>
+    </label>
+
+    <label>First Name
+      <input name="first_name" required>
+    </label>
+
+    <label>Last Name
+      <input name="last_name" required>
+    </label>
+
+    <label>Mobile
+      <input name="mobile" placeholder="+61…">
+    </label>
+
+    <button class="btn btn-primary">Save Details</button>
+  </form>
+</section>
+{% endblock %}

@@ -87,6 +87,7 @@
       <textarea id="dmBody" rows="8" placeholder="Type your message…" class="input-wide"></textarea>
 
       <div class="options-row">
+        <input type="checkbox" id="dmUpdateLink"> Request Updated Details</label>
         <label><input type="checkbox" id="dmPayLink"> Include PayLink</label>
       </div>
 
@@ -324,26 +325,54 @@ function openDMModal(id,name){
 }
 function closeDMModal(){document.getElementById('dmModal').classList.add('hidden');}
 async function sendDM(){
-  const subject=document.getElementById('dmSubject').value.trim();
-  const body=document.getElementById('dmBody').value.trim();
-  const includePayLink=document.getElementById('dmPayLink').checked;
-  const discord=document.getElementById('dmDiscord').checked;
-  const email=document.getElementById('dmEmail').checked;
-  const sms=document.getElementById('dmSMS').checked;
-  let groups=[];
-  if(isBroadcast){
-    document.querySelectorAll('.groupCheck:checked').forEach(c=>groups.push(c.value));
-    if(!groups.length){alert('Select at least one member group.');return;}
+  const subject = document.getElementById('dmSubject').value.trim();
+  let body = document.getElementById('dmBody').value.trim();
+
+  const includePayLink = document.getElementById('dmPayLink').checked;
+  const includeUpdateLink = document.getElementById('dmUpdateLink').checked;
+
+  const discord = document.getElementById('dmDiscord').checked;
+  const email = document.getElementById('dmEmail').checked;
+  const sms = document.getElementById('dmSMS').checked;
+
+  let groups = [];
+  if (isBroadcast) {
+    document.querySelectorAll('.groupCheck:checked').forEach(c => groups.push(c.value));
+    if (!groups.length) {
+      alert('Select at least one member group.');
+      return;
+    }
   }
-  try{
-    const res=await fetch(`/api/message/${dmTarget}`,{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({subject,body,includePayLink,discord,email,sms,groups})
+
+  // Insert PayLink
+  if (includePayLink) {
+      const resp = await fetch("/api/site_domain")
+      const json = await resp.json();
+      const domain = json.domain;
+      body += "\n\n💳 Pay here:\n" + domain + "/pay";
+  }
+
+  // Insert Update Details link
+  if (includeUpdateLink) {
+      const resp = await fetch("/api/site_domain");
+      const json = await resp.json();
+      const domain = json.domain;
+
+      body += "\n\n🔄 Update your details:\n" + domain + "/update";
+  }
+
+  try {
+    const res = await fetch(`/api/message/${dmTarget}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({subject,body,discord,email,sms,groups})
     });
-    const data=await res.json();
+    const data = await res.json();
     alert(data.ok?`✅ Sent ${data.sent_count} messages.`:`⚠️ ${data.error}`);
     closeDMModal();
-  }catch(err){alert('⚠️ '+err.message);}
+  } catch(err) {
+    alert('⚠️ '+err.message);
+  }
 }
 $dmAllBtn.addEventListener('click',()=>openDMModal('all','All Members'));
 
