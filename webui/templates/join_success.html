@@ -1,18 +1,20 @@
 {% extends "base_public.html" %}
 {% block content %}
-<section class="join-success" style="text-align:center; padding:40px;">
-  <h2>🎉 Welcome to {{ server_name }}!</h2>
-  <p>Your setup is complete.</p>
+<section class="public-wrapper">
 
-  <p>We’ve saved your details and activated your access.</p>
-  <br>
-  <a href="/" class="btn btn-primary">Return to Home</a>
+  <div class="public-card success">
+    <h2 class="public-title">🎉 Welcome to {{ server_name }}!</h2>
+    <p class="public-desc">Your setup is complete and your access is now active.</p>
 
-  {% if discord_enabled and discord_invite %}
-  <div style="margin-top:30px;">
-    <h3>Join our Discord Community</h3>
-    <a href="{{ discord_invite }}" target="_blank" class="btn">Join Discord</a>
+    <a href="/" class="btn btn-primary full-width">Return Home</a>
+
+    {% if discord_enabled and discord_invite %}
+    <div class="public-extra">
+      <h3>Join Our Discord</h3>
+      <a href="{{ discord_invite }}" target="_blank" class="btn btn-primary">Join Discord</a>
+    </div>
+    {% endif %}
   </div>
-  {% endif %}
+
 </section>
 {% endblock %}

@@ -863,3 +863,65 @@ body {
 .status-select:focus {
   outline: 1px solid var(--accent);
 }
+/* Public Pages - standalone card layout */
+.public-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.public-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.public-title {
+  margin: 0 0 12px 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.public-desc {
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.public-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.public-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.public-form input {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.full-width {
+  width: 100%;
+}
+
+.public-extra {
+  margin-top: 24px;
+}
+
+.public-card.success {
+  border-left: 4px solid var(--accent);
+}

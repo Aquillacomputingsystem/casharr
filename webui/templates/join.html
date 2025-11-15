@@ -1,20 +1,42 @@
 {% extends "base_public.html" %}
 {% block content %}
-<section class="join">
-  <h2>🎉 Welcome to {{ server_name }}!</h2>
-  <form method="POST">
-    <label>First Name<input name="first_name" required></label>
-    <label>Last Name<input name="last_name" required></label>
-    <label>Email<input name="email" type="email" required></label>
-    <label>Mobile<input name="mobile" placeholder="+61…"></label>
-    <button class="btn btn-primary">Complete Setup</button>
-  </form>
-{% if discord_enabled and discord_invite %}
-<div class="discord-box">
-  <p>Join our Discord community:</p>
-  <a href="{{ discord_invite }}" target="_blank" class="btn btn-primary">Join Discord</a>
-</div>
-{% endif %}
+<section class="public-wrapper">
 
+  <div class="public-card">
+    <h2 class="public-title">🎉 Join {{ server_name }}</h2>
+    <p class="public-desc">Create your Casharr profile so we can activate your access.</p>
+
+    <form method="POST" class="public-form">
+
+      <label>
+        First Name
+        <input name="first_name" required>
+      </label>
+
+      <label>
+        Last Name
+        <input name="last_name" required>
+      </label>
+
+      <label>
+        Email
+        <input name="email" type="email" required>
+      </label>
+
+      <label>
+        Mobile
+        <input name="mobile" placeholder="+61…" />
+      </label>
+
+      <button class="btn btn-primary full-width">Complete Setup</button>
+    </form>
+
+    {% if discord_enabled and discord_invite %}
+    <div class="public-extra">
+      <p>Join our Discord community:</p>
+      <a href="{{ discord_invite }}" target="_blank" class="btn btn-primary">Join Discord</a>
+    </div>
+    {% endif %}
+  </div>
 </section>
 {% endblock %}
