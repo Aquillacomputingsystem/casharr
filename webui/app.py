@@ -826,8 +826,8 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
-    """Return all members with consistent status (prefers DB column 'status' but applies config fallback logic)."""
-    import os, configparser
+    """Return all members with DB-stored status (no auto overrides)."""
+    import os, configparser, sqlite3
     from datetime import datetime, timezone
     from database import get_all_members
 
@@ -840,108 +840,33 @@ def api_members():
     LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip()
 
     rows = get_all_members()
-    now = datetime.now(timezone.utc)
     out = []
 
-    def parse_iso_safe(val):
-        if not val:
-            return None
-        try:
-            return datetime.fromisoformat(val)
-        except Exception:
-            return None
+    # Load DB column names (once)
+    conn = sqlite3.connect("data/members.db")
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(members)")
+    colnames = [x[1] for x in c.fetchall()]
+    conn.close()
+
+    status_index = colnames.index("status") if "status" in colnames else None
+    origin_index = colnames.index("origin") if "origin" in colnames else None
+    plex_index   = colnames.index("plex_username") if "plex_username" in colnames else None
 
     for r in rows:
-        # Handle possible missing/placeholder Discord IDs
-        try:
-            did = int(r[0]) if r[0] and str(r[0]).isdigit() else 0
-        except Exception:
-            did = 0
+        # Extract stored DB status
+        stored_status = None
+        if status_index is not None:
+            stored_status = r[status_index]
 
-        guild, member = _find_member_across_guilds(did)
-        role_display = "—"
-        if guild and member:
-            init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(guild)
-            if life_r and life_r in member.roles:
-                role_display = LIFETIME_ROLE
-            elif payer_r and payer_r in member.roles:
-                role_display = PAYER_ROLE
-            elif trial_r and trial_r in member.roles:
-                role_display = TRIAL_ROLE
-            elif init_r and init_r in member.roles:
-                role_display = INITIAL_ROLE
-            else:
-                role_display = "No Access"
-        else:
-            paid_until = parse_iso_safe(r[10] if len(r) > 10 else None)
-            trial_end  = parse_iso_safe(r[8] if len(r) > 8 else None)
-
-            import datetime as dtlib
-            def _to_naive(value):
-                if not value:
-                    return None
-                if isinstance(value, str):
-                    try:
-                        value = dtlib.datetime.fromisoformat(value)
-                    except Exception:
-                        return None
-                return value.replace(tzinfo=None)
-
-            now_naive = dtlib.datetime.now().replace(tzinfo=None)
-            pu = _to_naive(paid_until)
-            te = _to_naive(trial_end)
-
-            if pu and pu > now_naive:
-                role_display = PAYER_ROLE
-            elif te and te > now_naive:
-                role_display = TRIAL_ROLE
-            else:
-                role_display = INITIAL_ROLE
-
-        # 🟢 Prefer stored 'status' if present (last column is status)
-            stored_status = None
-            try:
-                if isinstance(r, (list, tuple)) and len(r) > 0:
-                    # we know the SELECT * order from get_all_members
-                    # look up by index name dynamically
-                    import sqlite3
-                    conn = sqlite3.connect("data/members.db")
-                    c = conn.cursor()
-                    c.execute("PRAGMA table_info(members)")
-                    colnames = [x[1] for x in c.fetchall()]
-                    conn.close()
-                    if "status" in colnames:
-                        status_index = colnames.index("status")
-                        stored_status = r[status_index]
-            except Exception:
-                pass
-        # Determine origin (sync/manual/invite/etc.)
-        origin = None
-        try:
-            origin = r[17] if len(r) > 17 else None
-        except Exception:
-            origin = None
-
-        # Decide final status logic
+        # If DB has a status, use it. If not → default to Initial.
         if stored_status and str(stored_status).strip():
-            # Prefer explicit DB value
             final_status = stored_status.strip()
         else:
-            # Apply fallback logic
-            if (origin or "").lower() == "sync":
-                # Plex-synced users with no stored status get LifetimeRole
-                final_status = LIFETIME_ROLE
-            elif "trial" in role_display.lower():
-                final_status = TRIAL_ROLE
-            elif "payer" in role_display.lower():
-                final_status = PAYER_ROLE
-            elif "life" in role_display.lower():
-                final_status = LIFETIME_ROLE
-            elif "expired" in role_display.lower():
-                final_status = "Expired"
-            else:
-                # Absolute fallback when nothing matches
-                final_status = INITIAL_ROLE
+            final_status = INITIAL_ROLE
+
+        origin = r[origin_index] if origin_index is not None else ""
+        plex_username = r[plex_index] if plex_index is not None else None
 
         out.append({
             "discord_id": r[0],
@@ -956,10 +881,9 @@ def api_members():
             "origin": origin or "",
             "status": final_status,
             "referrer_id": r[14] if len(r) > 14 else None,
-            "plex_username": r[19] if len(r) > 19 else None   # 🟢 ADD THIS
+            "plex_username": plex_username
         })
 
-    # 🟢 Return compiled JSON list
     return jsonify({"ok": True, "members": out})
 
 @webui.route("/api/member/<discord_id>", methods=["POST"])
@@ -1074,7 +998,7 @@ def api_member_delete(discord_id):
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
 
-    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
     plex_enabled = cfg.getboolean("Plex", "Enabled", fallback=True)
 
     # Email may be provided directly from frontend (in case member lookup fails)
@@ -1911,7 +1835,7 @@ def api_invite_member():
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
 
-    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
 
     data = request.get_json(silent=True) or {}
     email = data.get("email", "").strip()
@@ -2043,7 +1967,7 @@ def api_member_mark_paid(discord_id):
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
 
     try:
         new_date = update_paid_until(discord_id, 30)
@@ -2082,7 +2006,7 @@ def api_member_extend_trial(discord_id):
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
 
     try:
         new_date = extend_trial(discord_id, 7)
@@ -2119,7 +2043,7 @@ def api_member_set_status(discord_id):
     Update a member's status (Trial / Payer / Lifetime / Expired)
     and sync with Discord if enabled.
     """
-    from database import update_member_status, get_member
+    from database import update_member_status
     import configparser, os, asyncio
 
     data = request.get_json(silent=True) or {}
@@ -2127,55 +2051,51 @@ def api_member_set_status(discord_id):
     if not new_status:
         return jsonify({"ok": False, "error": "No status provided."}), 400
 
-    # ✅ Update in the database
+    # Save status in DB
     try:
         update_member_status(discord_id, new_status)
-        logger.info(f"✅ Updated {discord_id} to status: {new_status}")
+        logger.info(f"✅ Updated DB status for {discord_id}: {new_status}")
     except Exception as e:
-        logger.exception("❌ Failed to set status")
+        logger.exception("❌ Failed to update DB status")
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    # 🧠 Optional Discord sync (if enabled)
+    # Load role names from config.ini
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    discord_enabled = cfg.getboolean("Bot", "DiscordEnabled", fallback=False)
 
-    if discord_enabled and discord_id not in ("", "None", None):
-        try:
-            import main as bot_main
-            loop = asyncio.get_event_loop()
-            for g in bot_main.bot.guilds:
-                member_obj = g.get_member(int(discord_id))
-                if not member_obj:
-                    continue
-                init_r, trial_r, payer_r, life_r, _ = _roles_for_guild(g)
-                target_role = None
-                # Determine correct role
-                if new_status.lower() == "trial":
-                    target_role = trial_r
-                elif new_status.lower() == "payer":
-                    target_role = payer_r
-                elif new_status.lower() == "lifetime":
-                    target_role = life_r
-                else:
-                    target_role = init_r
-                if target_role:
-                    asyncio.run_coroutine_threadsafe(
-                        member_obj.add_roles(target_role, reason=f"WebUI set to {new_status}"),
-                        loop,
-                    )
-                # Remove conflicting roles
-                for role in [trial_r, payer_r, life_r, init_r]:
-                    if role and role != target_role and role in member_obj.roles:
-                        asyncio.run_coroutine_threadsafe(
-                            member_obj.remove_roles(role, reason=f"WebUI changed to {new_status}"),
-                            loop,
-                        )
-            logger.info(f"🪄 Synced Discord roles for {discord_id}")
-        except Exception as e:
-            logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
+    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
 
-    return jsonify({"ok": True, "message": f"Status updated to {new_status}."})
+    INITIAL_ROLE  = cfg.get("Discord", "InitialRole",  fallback="No Access").strip()
+    TRIAL_ROLE    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
+    PAYER_ROLE    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
+    LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Patreon").strip()
+
+    if not discord_enabled:
+        return jsonify({"ok": True, "message": f"Status updated (Discord disabled)."})
+
+    # ─────────────────────────────
+    # Discord Sync (using adapter)
+    # ─────────────────────────────
+    from bot.discord_adapter import apply_role
+
+    role_map = {
+        "trial": TRIAL_ROLE,
+        "payer": PAYER_ROLE,
+        "lifetime": LIFETIME_ROLE,
+        "expired": INITIAL_ROLE,
+        "initial": INITIAL_ROLE
+    }
+
+    target_role = role_map.get(new_status.lower(), INITIAL_ROLE)
+
+    try:
+        apply_role(int(discord_id), target_role)
+        logger.info(f"🪄 Applied Discord role {target_role} to {discord_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
+
+    return jsonify({"ok": True, "message": f"Status updated to {new_status}"}), 200
+
 
 @webui.route("/api/roles", methods=["GET"])
 def api_roles():

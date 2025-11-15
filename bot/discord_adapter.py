@@ -41,17 +41,54 @@ async def _update_role_async(member, role_name: str):
     logger.info(f"✅ Added role {role_name} to {member.display_name}")
 
 def apply_role(discord_id: int, role_name: str):
-    """Sync a member’s role in Discord if bot is running."""
+    """Fully replace a user's access role in Discord."""
     if not is_enabled():
         return
+
     try:
         member = None
         for g in bot.guilds:
             member = g.get_member(int(discord_id))
             if member:
                 break
-        if member:
-            asyncio.run_coroutine_threadsafe(_update_role_async(member, role_name), bot.loop)
+
+        if not member:
+            return
+
+        async def _update():
+            # Load config role names
+            cfg = configparser.ConfigParser()
+            cfg.read(CONFIG_PATH, encoding="utf-8")
+
+            role_initial  = cfg.get("Discord", "InitialRole",  fallback="No Access").strip()
+            role_trial    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
+            role_payer    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
+            role_lifetime = cfg.get("Discord", "LifetimeRole", fallback="Patreon").strip()
+
+            # All roles that Casharr controls
+            all_access_roles = [role_initial, role_trial, role_payer, role_lifetime]
+
+            # Convert names → actual Discord role objects
+            roles_to_remove = [
+                discord.utils.get(member.guild.roles, name=r)
+                for r in all_access_roles
+            ]
+            roles_to_remove = [r for r in roles_to_remove if r and r in member.roles]
+
+            # Remove old roles
+            if roles_to_remove:
+                await member.remove_roles(*roles_to_remove, reason="Casharr status update")
+
+            # Add new role
+            new_role = discord.utils.get(member.guild.roles, name=role_name)
+            if new_role:
+                await member.add_roles(new_role, reason="Casharr status update")
+                logger.info(f"🔄 Updated Discord role → {role_name} for {member.display_name}")
+            else:
+                logger.warning(f"⚠️ Role '{role_name}' not found in Discord.")
+
+        asyncio.run_coroutine_threadsafe(_update(), bot.loop)
+
     except Exception as e:
         logger.error(f"⚠️ Failed to apply Discord role: {e}")
 
