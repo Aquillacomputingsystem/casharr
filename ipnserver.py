@@ -209,6 +209,132 @@ def paypal_ipn():
     return "OK", 200
 
 # ────────────────────────────────
+# Coinbase Commerce IPN Endpoint
+# ────────────────────────────────
+@app.route("/coinbase/ipn", methods=["POST"])
+def coinbase_ipn():
+    import hmac, hashlib
+
+    # Load secrets
+    COINBASE_SECRET = config["Coinbase"].get("WebhookSecret", "").strip()
+    if not COINBASE_SECRET:
+        print("⚠️ Coinbase webhook received but no secret configured.")
+        return "NO SECRET", 400
+
+    # Coinbase sends JSON body
+    payload = request.data
+    signature = request.headers.get("X-CC-Webhook-Signature", "")
+
+    # Verify HMAC SHA256 signature
+    computed = hmac.new(
+        COINBASE_SECRET.encode(), payload, hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(computed, signature):
+        print("❌ Coinbase signature mismatch")
+        return "BAD SIGNATURE", 400
+
+    # Parse event
+    try:
+        event = json.loads(payload)
+        event_type = event.get("event", {}).get("type", "")
+        data = event.get("event", {}).get("data", {})
+        meta = data.get("metadata", {})
+    except Exception as e:
+        print(f"⚠️ Coinbase webhook parse failed: {e}")
+        return "BAD", 400
+
+    # Only confirm payments when fully paid
+    if event_type != "charge:confirmed":
+        return "IGNORED", 200
+
+    discord_id = str(meta.get("discord_id"))
+    months = int(meta.get("months", 1))
+
+    if not discord_id:
+        print("⚠️ Coinbase webhook missing discord_id")
+        return "OK", 200
+
+    print(f"💰 Coinbase payment confirmed for Discord ID {discord_id} ({months} months)")
+
+    # ────────────────────────────────
+    # Database update + Trial Clear
+    # ────────────────────────────────
+    existing = get_member(discord_id)
+    was_payer = bool(existing and existing[10])
+    was_promo_eligible = is_promo_eligible(discord_id) and not has_used_promo(discord_id)
+
+    update_payment(discord_id, months)
+    clear_trial_after_payment(discord_id)
+
+    # Mark promo used
+    if was_promo_eligible:
+        try:
+            mark_promo_used(discord_id)
+            print(f"🎁 Promo marked as used for Discord ID {discord_id}")
+        except Exception as e:
+            print(f"⚠️ Failed to mark promo for {discord_id}: {e}")
+
+    # ────────────────────────────────
+    # Referral Bonus Logic
+    # ────────────────────────────────
+    try:
+        ref_data = get_member(discord_id)
+        referrer_id = ref_data[14] if len(ref_data) > 14 else None
+
+        if referrer_id:
+            ref_cfg = config["Referral"]
+            bonus_days = int(ref_cfg.get(
+                f"Bonus{months}Month" if months == 1 else f"Bonus{months}Months",
+                {"1": 7, "3": 14, "6": 30, "12": 60}[str(months)]
+            ))
+
+            if bonus_days > 0:
+                conn = sqlite3.connect("data/members.db")
+                c = conn.cursor()
+                ref_row = get_member(referrer_id)
+                base = (
+                    datetime.fromisoformat(ref_row[10])
+                    if ref_row[10]
+                    else datetime.now(timezone.utc)
+                )
+                new_paid_until = base + timedelta(days=bonus_days)
+
+                c.execute(
+                    "UPDATE members SET paid_until=? WHERE discord_id=?",
+                    (new_paid_until.isoformat(), str(referrer_id))
+                )
+                conn.commit()
+                conn.close()
+
+                msg = f"🎁 Referral bonus added: {bonus_days} days → <@{referrer_id}>"
+                print(msg)
+                if ADMIN_WEBHOOK_URL:
+                    requests.post(ADMIN_WEBHOOK_URL, json={"content": msg})
+
+    except Exception as e:
+        print(f"⚠️ Referral logic failed for {discord_id}: {e}")
+
+    # ────────────────────────────────
+    # Admin Messaging + Discord Role Sync
+    # ────────────────────────────────
+    from bot.discord_adapter import apply_role, send_admin
+
+    try:
+        if was_payer:
+            send_admin(f"💰 Crypto renewal processed for <@{discord_id}> — {months} month(s).")
+        else:
+            send_admin(f"💳 Crypto payment recorded for <@{discord_id}> — trial cleared and access extended.")
+
+        apply_role(discord_id, "Payer")
+
+    except Exception as e:
+        print(f"⚠️ Discord role sync failed: {e}")
+
+    return "OK", 200
+
+
+# ────────────────────────────────
 # Thank-you and Cancel pages
 # ────────────────────────────────
 @app.route("/paypal/thanks")

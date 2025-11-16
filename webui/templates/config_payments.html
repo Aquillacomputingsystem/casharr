@@ -121,6 +121,34 @@
       </div>
     </div>
 
+      <!-- ────── COINBASE ────── -->
+  <div class="config-section">
+    <h3>₿ Coinbase Commerce</h3>
+
+    <div class="form-row">
+      <label>
+        <span>Enable Coinbase</span>
+        <select name="CoinbaseEnabled">
+          <option value="true"  {% if config.get('coinbase_enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+          <option value="false" {% if config.get('coinbase_enabled','').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="form-grid-2">
+      <label><span>API Key</span>
+        <input type="text" name="CoinbaseApiKey" value="{{ config.get('apikey','') }}">
+      </label>
+      <label><span>Webhook Secret</span>
+        <input type="text" name="CoinbaseWebhookSecret" value="{{ config.get('webhooksecret','') }}">
+      </label>
+    </div>
+
+    <p class="desc">
+      Get your API key & webhook secret from:<br>
+      <code>https://commerce.coinbase.com/dashboard/settings</code>
+    </p>
+  </div>
     <!-- ────── ACTIONS ────── -->
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">💾 Save Changes</button>

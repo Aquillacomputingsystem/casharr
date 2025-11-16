@@ -119,6 +119,37 @@
   </div>
 </div>
 
+<!-- Mark Paid Modal (Casharr Styled) -->
+<div id="markPaidModal" class="modal hidden">
+  <div class="modal__card" style="max-width:450px;">
+    <header class="modal__head">
+      <h3>Mark Member as Paid</h3>
+      <button class="icon-btn" onclick="closeMarkPaid()">✕</button>
+    </header>
+
+    <div class="modal__body">
+      <input type="hidden" id="paid_discord_id">
+
+      <label style="font-weight:600;">Select Duration</label>
+      <select id="paid_months" class="input-wide">
+        <option value="30">1 Month</option>
+        <option value="90">3 Months</option>
+        <option value="180">6 Months</option>
+        <option value="365">12 Months</option>
+      </select>
+
+      <label style="font-weight:600;margin-top:12px;">Or enter custom days</label>
+      <input type="number" id="paid_custom_days" class="input-wide"
+             placeholder="Leave blank to ignore">
+    </div>
+
+    <footer class="modal__foot">
+      <button class="btn" onclick="closeMarkPaid()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmMarkPaid()">Mark Paid</button>
+    </footer>
+  </div>
+</div>
+
 <style>
 .members .header-row {
   display:flex;justify-content:space-between;align-items:center;
@@ -246,12 +277,17 @@ $save.addEventListener('click',async()=>{
 $body.addEventListener('click',e=>{
   const v=e.target.closest('.js-view');
   const dm=e.target.closest('.js-dm');
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const id = tr.dataset.id;
+
   const paid = e.target.closest('.js-paid');
   const trial = e.target.closest('.js-trial');
-  if (paid) return markPaid(id);
+
+  if (paid) return openMarkPaid(id);
   if (trial) return extendTrial(id);
-  const del=e.target.closest('.js-remove');
-  const tr=e.target.closest('tr');if(!tr)return;const id=tr.dataset.id;
+
+  const del = e.target.closest('.js-remove');
   if(v)return openViewModal(id);
   if(dm)return openDMModal(id,tr.querySelector('td').textContent);
   if(del){if(confirm('Remove Plex + downgrade to No Access?'))removeMember(id);}
@@ -287,7 +323,45 @@ function removeMember(discordId, email) {
     });
 }
 
+function openMarkPaid(discord_id) {
+    document.getElementById("paid_discord_id").value = discord_id;
+    document.getElementById("paid_months").value = 30;
+    document.getElementById("paid_custom_days").value = "";
+    new bootstrap.Modal(document.getElementById("markPaidModal")).show();
+}
 
+function confirmMarkPaid() {
+    const discord_id = document.getElementById("paid_discord_id").value;
+    const months = parseInt(document.getElementById("paid_months").value);
+    const custom = parseInt(document.getElementById("paid_custom_days").value);
+
+    const days = custom > 0 ? custom : months;
+
+    fetch(`/api/member/${discord_id}/manual_payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days })
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.ok) {
+            alert("Payment updated!");
+            location.reload();
+        } else {
+            alert(res.error);
+        }
+    });
+}
+function openMarkPaid(discord_id) {
+  document.getElementById("paid_discord_id").value = discord_id;
+  document.getElementById("paid_months").value = 30;
+  document.getElementById("paid_custom_days").value = "";
+  document.getElementById("markPaidModal").classList.remove("hidden");
+}
+
+function closeMarkPaid() {
+  document.getElementById("markPaidModal").classList.add("hidden");
+}
 
 async function openViewModal(id){
   const modal=document.getElementById('viewModal');
@@ -416,13 +490,6 @@ async function forceSyncAccess(){
   const res = await fetch('/api/sync_access',{method:'POST'});
   const data = await res.json();
   alert(data.ok ? data.message : '❌ Error: ' + data.error);
-}
-async function markPaid(discordId){
-  if(!confirm("Mark this member as paid for 30 days?")) return;
-  const res=await fetch(`/api/member/${discordId}/mark_paid`,{method:'POST'});
-  const data=await res.json();
-  alert(data.ok ? "✅ " + data.message : "❌ " + data.error);
-  loadMembers();
 }
 
 async function extendTrial(discordId){

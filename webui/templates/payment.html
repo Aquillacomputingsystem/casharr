@@ -2,43 +2,128 @@
 {% block content %}
 
 <section class="payment" style="max-width:600px;margin:40px auto;">
-  <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:20px;">💳 Choose a PayPal Payment Option</h2>
+
+  <h2 style="font-size:1.8rem;font-weight:700;margin-bottom:20px;">
+    💳 Choose a Payment Option
+  </h2>
 
   <p style="margin-bottom:20px;font-size:1rem;color:var(--text-muted);">
-    Select a subscription duration below. You will be redirected to PayPal.  
-    Please keep the Discord ID in the note so we can match your payment.
+    Select a subscription duration below.
   </p>
 
+  {% if promo_applies %}
+  <div style="
+        background:#e8fff0;
+        border:1px solid var(--border);
+        padding:14px 16px;
+        border-radius:10px;
+        margin-bottom:20px;
+        color:#008a44;
+        font-weight:600;">
+    🎁 <strong>Referral Promo Unlocked!</strong><br>
+    {{ promo.note }}
+  </div>
+  {% endif %}
+
+  {% set plans = [
+    {"months": 1, "price": pricing.m1, "promo": promo.d1},
+    {"months": 3, "price": pricing.m3, "promo": promo.d3},
+    {"months": 6, "price": pricing.m6, "promo": promo.d6},
+    {"months": 12, "price": pricing.m12, "promo": promo.d12},
+  ] %}
+
   <div class="card" style="padding:20px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev);box-shadow:var(--shadow-sm);">
-    <h3 style="font-size:1.3rem;margin-bottom:14px;">PayPal Options</h3>
+
+    <!-- PAYPAL -->
+    <h3 style="font-size:1.3rem;margin-bottom:14px;">PayPal</h3>
 
     <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px;">
-      <li>
-        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/6?note={{ discord_id }}">
-          1 Month — $6.00
-        </a>
-      </li>
+      {% for p in plans %}
+        {% set months = p.months %}
+        {% set price = p.price %}
+        {% set promo_price = p.promo %}
+        {% set effective = promo_price if promo_applies and promo_price != '0' else price %}
 
       <li>
-        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/15?note={{ discord_id }}">
-          3 Months — $15.00
-        </a>
-      </li>
+        <a class="pay-btn"
+           href="{{ paypal_base }}/{{ discord_id }}/{{ months }}">
+          {{ months }} Month{% if months > 1 %}s{% endif %} — 
 
-      <li>
-        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/29?note={{ discord_id }}">
-          6 Months — $29.00
+          {% if promo_applies and promo_price != '0' %}
+            <span style="text-decoration:line-through;opacity:0.6;">${{ price }}</span>
+            <span style="color:#22c55e;font-weight:700;">${{ promo_price }}</span>
+          {% else %}
+            ${{ price }}
+          {% endif %}
         </a>
       </li>
-
-      <li>
-        <a class="pay-btn" href="https://www.paypal.com/paypalme/justinkurban/55?note={{ discord_id }}">
-          12 Months — $55.00
-        </a>
-      </li>
+      {% endfor %}
     </ul>
+
+    <hr style="margin:25px 0;border:0;border-top:1px solid var(--border);">
+
+    <!-- COINBASE -->
+    <h3 style="font-size:1.3rem;margin-bottom:14px;">Crypto (Coinbase Commerce)</h3>
+
+    <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px;">
+
+      {% for p in plans %}
+        {% set months = p.months %}
+        {% set price = p.price %}
+        {% set promo_price = p.promo %}
+        {% set effective = promo_price if promo_applies and promo_price != '0' else price %}
+
+      <li>
+        <button class="pay-btn crypto crypto-btn"
+                data-months="{{ months }}"
+                data-amount="{{ effective }}">
+          {{ months }} Month{% if months > 1 %}s{% endif %} — 
+
+          {% if promo_applies and promo_price != '0' %}
+            <span style="text-decoration:line-through;opacity:0.6;">${{ price }}</span>
+            <span style="color:#22c55e;font-weight:700;">${{ promo_price }}</span>
+          {% else %}
+            ${{ price }}
+          {% endif %}
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+
   </div>
 </section>
+
+<script>
+function payCoinbase(months, amount) {
+  amount = parseFloat(amount);
+  fetch('/api/coinbase/create_charge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      discord_id: "{{ discord_id }}",
+      months: months,
+      amount: amount
+    })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.ok && res.url) {
+      window.location.href = res.url;
+    } else {
+      alert("Crypto payment error: " + (res.error || "Unknown error"));
+    }
+  })
+  .catch(err => alert("Network error: " + err));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.crypto-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      payCoinbase(btn.dataset.months, btn.dataset.amount);
+    });
+  });
+});
+</script>
 
 <style>
   .pay-btn {
@@ -51,6 +136,9 @@
     font-weight:600;
     text-decoration:none;
     transition:0.15s;
+  }
+  .pay-btn.crypto {
+    background:#4c1d95;
   }
   .pay-btn:hover {
     filter:brightness(1.1);

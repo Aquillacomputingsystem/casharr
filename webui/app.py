@@ -600,6 +600,11 @@ def config_payments():
             cfg["PayPal"]["IPN_URL"] = request.form.get("IPN_URL", "").strip()
             cfg["PayPal"]["IPNListenPort"] = request.form.get("IPNListenPort", "5000").strip()
 
+                        
+            cfg["Coinbase"]["Enabled"] = request.form.get("CoinbaseEnabled", "false")
+            cfg["Coinbase"]["ApiKey"] = request.form.get("CoinbaseApiKey", "").strip()
+            cfg["Coinbase"]["WebhookSecret"] = request.form.get("CoinbaseWebhookSecret", "").strip()
+
             cfg["Site"]["Domain"] = request.form.get("Domain", "").strip()
 
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -614,6 +619,64 @@ def config_payments():
         for k, v in cfg[sec].items():
             merged[k.lower()] = v
     return render_template("config_payments.html", title="Config | Payments", config=merged)
+
+
+@webui.route("/api/coinbase/create_charge", methods=["POST"])
+def api_coinbase_create_charge():
+    import configparser, os, requests, json
+
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    if not cfg.getboolean("Coinbase", "Enabled", fallback=False):
+        return jsonify({"ok": False, "error": "Coinbase disabled"}), 400
+
+    API_KEY = cfg.get("Coinbase", "ApiKey", fallback="")
+    if not API_KEY:
+        return jsonify({"ok": False, "error": "Coinbase API Key missing"}), 400
+
+    data = request.get_json(silent=True) or {}
+    discord_id = data.get("discord_id")
+    months = int(data.get("months", 1))
+    amount = float(data.get("amount", 0))
+
+    charge = {
+        "name": f"{months}-Month Subscription",
+        "pricing_type": "fixed_price",
+        "local_price": {
+            "amount": str(amount),
+            "currency": cfg.get("Pricing", "DefaultCurrency", fallback="AUD")
+        },
+        "metadata": {
+            "discord_id": str(discord_id),
+            "months": months
+        }
+    }
+
+    headers = {
+        "X-CC-Api-Key": API_KEY,
+        "X-CC-Version": "2018-03-22",
+        "Content-Type": "application/json"
+    }
+
+    res = requests.post(
+        "https://api.commerce.coinbase.com/charges",
+        json=charge,
+        headers=headers
+    )
+
+    try:
+        out = res.json()
+    except:
+        return jsonify({"ok": False, "error": "Invalid Coinbase response"}), 500
+
+    if "data" not in out:
+        return jsonify({"ok": False, "error": out}), 500
+
+    hosted = out["data"]["hosted_url"]
+    return jsonify({"ok": True, "url": hosted})
+
+
 
 # ───────────────────────────────
 # CONFIGURATION: System Settings (incl. SMTP)
@@ -1371,7 +1434,11 @@ def api_message(target):
 
         # Add pay link
         if include_paylink:
-            domain = cfg.get("Site", "Domain", fallback="http://localhost:5000").rstrip("/")
+            domain = cfg.get("Site", "Domain", "").rstrip("/")
+            if not domain:
+                domain = cfg.get("System", "ExternalAddress", "").rstrip("/")
+            if not domain:
+                domain = request.host_url.rstrip("/")
             message_text += f"\n\n💳 Pay Now: {domain}/pay/{discord_id}"
 
         sent_channels = []
@@ -1975,82 +2042,6 @@ def api_extend_trial(discord_id):
     )
     return jsonify({"ok": True, "trial_end": new_date})
 
-
-# ---------------------------------------------------------------------------
-# 💰 Mark Paid
-# ---------------------------------------------------------------------------
-@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
-def api_mark_paid(discord_id):
-    """Mark a member as paid, update DB and optionally Discord."""
-    from datetime import datetime, timedelta
-    from database import get_member, add_or_update_member
-    data = request.get_json(force=True)
-    member = get_member(discord_id)
-    if not member:
-        return jsonify({"ok": False, "error": "Member not found"}), 404
-
-    paid_until = (datetime.utcnow() + timedelta(days=int(data.get("days", 30)))).isoformat()
-    add_or_update_member(
-        discord_id,
-        first_name=member[2],
-        last_name=member[3],
-        email=member[4],
-        mobile=member[5],
-        paid_until=paid_until,
-    )
-    return jsonify({"ok": True, "paid_until": paid_until})
-
-
-@webui.route("/api/sync_access", methods=["POST"])
-def api_sync_access():
-    """Trigger a full Plex/Discord access enforcement run."""
-    from bot.tasks import enforce_access
-    try:
-        enforce_access.run_enforcement()
-        return jsonify({"ok": True, "message": "Access sync completed"})
-    except Exception as e:
-        logger.exception("Access sync failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
-    
-    # ───────────────────────────────
-# 💰 MARK MEMBER AS PAID
-# ───────────────────────────────
-@webui.route("/api/member/<discord_id>/mark_paid", methods=["POST"])
-def api_member_mark_paid(discord_id):
-    from database import update_paid_until
-    import configparser, os
-
-    cfg = configparser.ConfigParser()
-    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
-
-    try:
-        new_date = update_paid_until(discord_id, 30)
-        logger.info(f"✅ Marked {discord_id} as paid until {new_date}")
-
-        # Optional Discord sync
-        if discord_enabled:
-            try:
-                import main as bot_main
-                import asyncio
-                loop = asyncio.get_event_loop()
-                for g in bot_main.bot.guilds:
-                    member = g.get_member(int(discord_id))
-                    if member:
-                        payer_role = discord.utils.get(g.roles, name="Payer")
-                        if payer_role:
-                            asyncio.run_coroutine_threadsafe(
-                                member.add_roles(payer_role, reason="Marked as paid via WebUI"), loop
-                            )
-            except Exception as e:
-                logger.warning(f"⚠️ Discord role sync failed: {e}")
-
-        return jsonify({"ok": True, "message": f"Member marked as paid until {new_date}."})
-    except Exception as e:
-        logger.exception("❌ Failed to mark paid")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
 # ───────────────────────────────
 # ⏳ EXTEND MEMBER TRIAL
 # ───────────────────────────────
@@ -2258,8 +2249,42 @@ def api_roles():
 
 @webui.route("/pay/<discord_id>")
 def pay_page(discord_id):
-    return render_template("payment.html", discord_id=discord_id)
+    import configparser, os
+    from database import has_referrer
 
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    pricing = {
+        "currency": cfg.get("Pricing", "DefaultCurrency", fallback="AUD"),
+        "m1": cfg.get("Pricing", "1Month", fallback="0"),
+        "m3": cfg.get("Pricing", "3Months", fallback="0"),
+        "m6": cfg.get("Pricing", "6Months", fallback="0"),
+        "m12": cfg.get("Pricing", "12Months", fallback="0"),
+    }
+
+    promo = {
+        "enabled": cfg.getboolean("Promo", "Enabled", fallback=False),
+        "d1": cfg.get("Promo", "Discount1Month", fallback="0"),
+        "d3": cfg.get("Promo", "Discount3Months", fallback="0"),
+        "d6": cfg.get("Promo", "Discount6Months", fallback="0"),
+        "d12": cfg.get("Promo", "Discount12Months", fallback="0"),
+        "note": cfg.get("Promo", "Note", fallback=""),
+    }
+
+    # 🔥 NEW — Only apply promo if the user was referred
+    promo_applies = promo["enabled"] and has_referrer(discord_id)
+
+    paypal_base = cfg.get("PayPal", "PaymentBaseLink", fallback="").rstrip("/")
+
+    return render_template(
+        "payment.html",
+        discord_id=discord_id,
+        pricing=pricing,
+        promo=promo,
+        promo_applies=promo_applies,
+        paypal_base=paypal_base,
+    )
 
 @webui.route("/update", methods=["GET", "POST"])
 def update_details():
@@ -2295,5 +2320,73 @@ def update_details():
 def api_site_domain():
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
-    domain = cfg.get("Site", "Domain", fallback="http://localhost:5000")
+
+    # 1) Try [Site] domain
+    domain = cfg.get("Site", "Domain", fallback="").strip()
+
+    # 2) Fallback to [System] ExternalAddress
+    if not domain:
+        domain = cfg.get("System", "ExternalAddress", fallback="").strip()
+
+    # 3) Last resort: use the incoming host (e.g. https://casharr.aquillacomputingsystem.com)
+    if not domain:
+        domain = request.host_url.rstrip("/")
+
     return jsonify({"domain": domain.rstrip("/")})
+
+@webui.post("/api/member/<discord_id>/manual_payment")
+def api_manual_payment(discord_id):
+    """Manual mark paid — identical to PayPal payment logic."""
+    from datetime import datetime, timedelta, timezone
+    from database import get_member, add_or_update_member, update_member_status
+    import configparser, os, asyncio, discord
+
+    data = request.get_json(silent=True) or {}
+    days = int(data.get("days", 30))
+
+    member = get_member(discord_id)
+    if not member:
+        return jsonify({"ok": False, "error": "Member not found"}), 404
+
+    # -------------------------------------
+    # Compute new paid_until
+    # -------------------------------------
+    now = datetime.now(timezone.utc)
+
+    try:
+        existing = member.get("paid_until")
+        if existing:
+            base = datetime.fromisoformat(existing)
+            new_date = (base + timedelta(days=days))
+        else:
+            new_date = now + timedelta(days=days)
+
+        # Write to DB
+        add_or_update_member(
+            discord_id,
+            first_name=member.get("first_name"),
+            last_name=member.get("last_name"),
+            email=member.get("email"),
+            mobile=member.get("mobile"),
+            paid_until=new_date.isoformat(),
+        )
+
+        # Set status = Payer
+        update_member_status(discord_id, "Payer")
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # -------------------------------------
+    # Discord role sync (if enabled)
+    # -------------------------------------
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    if cfg.getboolean("Discord", "Enabled", fallback=False):
+        try:
+            from bot.discord_adapter import apply_role
+            apply_role(int(discord_id), cfg.get("Discord","PayerRole","Payer"))
+        except:
+            pass
+
+    return jsonify({"ok": True, "paid_until": new_date.isoformat()})

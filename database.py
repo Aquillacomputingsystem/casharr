@@ -442,6 +442,14 @@ def _configured_trial_days(default: int = 30) -> int:
     except Exception:
         return default
 
+def has_referrer(discord_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT referrer FROM members WHERE discord_id=?", (str(discord_id),))
+    row = c.fetchone()
+    conn.close()
+    return bool(row and row[0])
+
 def save_member(
     discord_id=None,
     discord_tag="",
