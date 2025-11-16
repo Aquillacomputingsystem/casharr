@@ -148,6 +148,30 @@ def start_trial(discord_id, duration_days):
     conn.commit()
     conn.close()
 
+def clear_all_trial_fields(discord_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        UPDATE members
+        SET trial_start=NULL,
+            trial_end=NULL,
+            had_trial=0,
+            trial_reminder_sent_at=NULL
+        WHERE discord_id=?
+    """, (discord_id,))
+    conn.commit()
+    conn.close()
+
+def clear_paid_until(discord_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        UPDATE members
+        SET paid_until=NULL
+        WHERE discord_id=?
+    """, (discord_id,))
+    conn.commit()
+    conn.close()
 
 def end_trial(discord_id):
     """End the trial immediately."""
@@ -174,12 +198,17 @@ def update_payment(discord_id, months):
 
     now = datetime.now(timezone.utc)
     added = timedelta(days=30 * int(months))
-    existing = get_member(discord_id)
+
+    # Start from "now" by default
     base = now
 
-    if existing and existing[10]:  # paid_until
+    # Safely look up existing paid_until using get_member() dict
+    existing = get_member(discord_id)
+    paid_until = existing.get("paid_until") if existing else None
+
+    if paid_until:
         try:
-            current_paid = datetime.fromisoformat(existing[10])
+            current_paid = datetime.fromisoformat(paid_until)
             if current_paid > now:
                 base = current_paid
         except Exception:
@@ -250,7 +279,7 @@ def mark_promo_used(discord_id):
 
 def has_used_promo(discord_id):
     row = get_member(discord_id)
-    return bool(row and len(row) > 13 and row[13] == 1)
+    return bool(row and row.get("used_promo") == 1)
 
 
 def is_promo_eligible(discord_id):
@@ -266,7 +295,7 @@ def is_promo_eligible(discord_id):
 
     origin = None
     try:
-        origin = row[17] if len(row) > 17 else None
+        origin = row.get("origin")
     except Exception:
         pass
 
@@ -279,8 +308,8 @@ def is_promo_eligible(discord_id):
         return False
 
     # Active trial or payment → no
-    paid_until = row[10]
-    trial_end = row[8]
+    paid_until = row.get("paid_until")
+    trial_end = row.get("trial_end")
 
     now = datetime.now(timezone.utc)
     try:
@@ -312,8 +341,9 @@ def get_referrals(referrer_id):
 def get_referrer(discord_id):
     """Return the referrer for a given member (if any)."""
     row = get_member(discord_id)
-    if row and len(row) > 14 and row[14]:
-        return row[14]
+    if row and row.get("referrer_id"):
+        return row.get("referrer_id")
+
     return None
 
 # ─────────────────────────────
@@ -326,7 +356,6 @@ def get_all_members():
     rows = c.fetchall()
     conn.close()
     return rows
-
 
 def get_member(discord_id):
     conn = sqlite3.connect(DB_PATH)
@@ -390,9 +419,11 @@ def has_active_trial(discord_id):
     row = get_member(discord_id)
     if not row:
         return False
-    trial_end = row[8]
+
+    trial_end = row.get("trial_end")
     if not trial_end:
         return False
+
     try:
         end_dt = datetime.fromisoformat(trial_end)
         return end_dt > datetime.now(timezone.utc)

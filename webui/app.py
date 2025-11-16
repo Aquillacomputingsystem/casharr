@@ -88,8 +88,8 @@ def enforce_login_on_first_visit():
         "webui.static",
         "webui.join_page",
         "webui.referral_portal",
-        "webui.pay_page"
-        "webui.update_details" 
+        "webui.pay_page",
+        "webui.update_details",
     ]
     if request.endpoint in public_routes:
         return
@@ -349,29 +349,56 @@ def api_sync_plex():
 # ───────────────────────────────
 @webui.route("/api/stats")
 def api_stats():
+    from datetime import datetime, timezone
     rows = get_all_members()
-    from datetime import datetime
-    now = datetime.now().replace(tzinfo=None)
+
+    # Use timezone-aware "now" in UTC
+    now = datetime.now(timezone.utc)
+
     total = len(rows)
-    active_trials = sum(1 for r in rows if r[8] and datetime.fromisoformat(r[8]) > now)
+    active_trials = 0
     active_payers = 0
+    expired = 0
+
     for r in rows:
-        if not r[10]:
-            continue
-        try:
-            paid_until = datetime.fromisoformat(r[10])
-            # make both aware or both naive for comparison
-            if paid_until.tzinfo is None:
-                paid_until = paid_until.replace(tzinfo=timezone.utc)
-            if paid_until > now:
-                active_payers += 1
-        except Exception:
-            continue
-    expired = sum(
-        1 for r in rows
-        if ((r[8] and datetime.fromisoformat(r[8]) < now) or (r[10] and datetime.fromisoformat(r[10]) < now))
-    )
-    return jsonify({"total": total, "active_trials": active_trials, "active_payers": active_payers, "expired": expired})
+        trial_end_raw = r[8] if len(r) > 8 else None
+        paid_until_raw = r[10] if len(r) > 10 else None
+
+        trial_end = None
+        paid_until = None
+
+        # Safely parse trial_end
+        if trial_end_raw:
+            try:
+                trial_end = datetime.fromisoformat(trial_end_raw)
+            except Exception:
+                trial_end = None
+
+        # Safely parse paid_until
+        if paid_until_raw:
+            try:
+                paid_until = datetime.fromisoformat(paid_until_raw)
+            except Exception:
+                paid_until = None
+
+        # Count active trials
+        if trial_end and trial_end > now:
+            active_trials += 1
+
+        # Count active payers
+        if paid_until and paid_until > now:
+            active_payers += 1
+
+        # Count expired (either trial or paid has ended)
+        if (trial_end and trial_end < now) or (paid_until and paid_until < now):
+            expired += 1
+
+    return jsonify({
+        "total": total,
+        "active_trials": active_trials,
+        "active_payers": active_payers,
+        "expired": expired
+    })
 
 
 @webui.route("/api/logs")
@@ -827,62 +854,45 @@ def _compute_status(row, member, guild):
 # ───────────────────────────────
 @webui.route("/api/members", methods=["GET"])
 def api_members():
-    """Return all members with DB-stored status (no auto overrides)."""
-    import os, configparser, sqlite3
-    from datetime import datetime, timezone
-    from database import get_all_members
+    import sqlite3, os, configparser
 
-    # Load Discord role names from config.ini
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
     INITIAL_ROLE  = cfg.get("Discord", "InitialRole",  fallback="Initial").strip()
     TRIAL_ROLE    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
     PAYER_ROLE    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
     LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip()
 
-    rows = get_all_members()
-    out = []
-
-    # Load DB column names (once)
+    # --- Load DB columns ---
     conn = sqlite3.connect("data/members.db")
     c = conn.cursor()
     c.execute("PRAGMA table_info(members)")
-    colnames = [x[1] for x in c.fetchall()]
+    colnames = [row[1] for row in c.fetchall()]
     conn.close()
 
-    status_index = colnames.index("status") if "status" in colnames else None
-    origin_index = colnames.index("origin") if "origin" in colnames else None
-    plex_index   = colnames.index("plex_username") if "plex_username" in colnames else None
+    rows = get_all_members()
+    out = []
 
-    for r in rows:
-        # Extract stored DB status
-        stored_status = None
-        if status_index is not None:
-            stored_status = r[status_index]
+    for raw in rows:
+        row = dict(zip(colnames, raw))   # ← FIXED: align properly
 
-        # If DB has a status, use it. If not → default to Initial.
-        if stored_status and str(stored_status).strip():
-            final_status = stored_status.strip()
-        else:
-            final_status = INITIAL_ROLE
-
-        origin = r[origin_index] if origin_index is not None else ""
-        plex_username = r[plex_index] if plex_index is not None else None
+        db_status = row.get("status") or INITIAL_ROLE
 
         out.append({
-            "discord_id": r[0],
-            "discord_tag": r[1],
-            "first_name": r[2],
-            "last_name": r[3],
-            "email": r[4],
-            "mobile": r[5],
-            "trial_start": r[7],
-            "trial_end": r[8],
-            "paid_until": r[10],
-            "origin": origin or "",
-            "status": final_status,
-            "referrer_id": r[14] if len(r) > 14 else None,
-            "plex_username": plex_username
+            "discord_id": row.get("discord_id"),
+            "discord_tag": row.get("discord_tag"),
+            "first_name": row.get("first_name"),
+            "last_name": row.get("last_name"),
+            "email": row.get("email"),
+            "mobile": row.get("mobile"),
+            "trial_start": row.get("trial_start"),
+            "trial_end": row.get("trial_end"),     # ← NOW CORRECT EVERY TIME
+            "paid_until": row.get("paid_until"),
+            "origin": row.get("origin") or "",
+            "status": db_status,
+            "referrer_id": row.get("referrer_id"),
+            "plex_username": row.get("plex_username")
         })
 
     return jsonify({"ok": True, "members": out})
@@ -1141,10 +1151,15 @@ def join_page(token):
 
     cfg = configparser.ConfigParser()
     cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
     discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
     discord_invite = cfg.get("Discord", "InviteLink", fallback="")
     referral_cfg = cfg["Referral"] if cfg.has_section("Referral") else {}
     trial_cfg = cfg["Trial"] if cfg.has_section("Trial") else {}
+
+    # Load trial role name from config
+    TRIAL_ROLE = cfg.get("Discord", "TrialRole", fallback="Trial").strip()
 
     if request.method == "POST":
         first = request.form.get("first_name", "").strip()
@@ -1153,37 +1168,68 @@ def join_page(token):
         mobile = request.form.get("mobile", "").strip()
         referrer_id = request.args.get("ref", "").strip()
 
-        save_member(member[0], first_name=first, last_name=last, email=email, mobile=mobile, origin="invite")
+        # Update member details
+        save_member(
+            member[0],
+            first_name=first,
+            last_name=last,
+            email=email,
+            mobile=mobile,
+            origin="invite"
+        )
 
-        # Mark joined
+        # ----------------------------
+        # AUTO-START TRIAL
+        # ----------------------------
+        from database import start_trial, update_member_status
+
+        try:
+            update_member_status(member[0], TRIAL_ROLE)
+
+            days = cfg.getint("Trial", "DurationDays", fallback=7)
+            start_trial(member[0], days)
+            logger.info(f"⏳ Trial started for new member {member[0]} ({days} days)")
+
+            logger.info(f"⏳ Trial started for new member {member[0]}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to set trial for {member[0]}: {e}")
+
+        # Mark join as completed
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("UPDATE members SET join_status='completed' WHERE join_token=?", (token,))
         conn.commit()
         conn.close()
 
-        # 🏆 Apply referral rewards if ref param + enabled
+        # ----------------------------
+        # REFERRAL SYSTEM
+        # ----------------------------
         if cfg.getboolean("Referral", "enabled", fallback=False) and referrer_id:
             apply_referral_bonus(referrer_id, member[0], referral_cfg, trial_cfg)
 
-            # Notify admin or referrer
+            # Notify admin/referrer
             msg = f"🎁 Referral Complete: {first} {last} joined via {referrer_id}. Bonus applied!"
             try:
                 send_email("Referral Complete", msg, cfg.get("SMTP", "To", fallback=""))
             except Exception as e:
                 print(f"⚠️ Email notify failed: {e}")
+
             try:
                 send_sms(cfg.get("SMS", "TestNumber", fallback=""), msg)
             except Exception as e:
                 print(f"⚠️ SMS notify failed: {e}")
 
         return render_template("join_success.html", title=f"Welcome | {SERVER_NAME}")
-    SERVER_NAME = cfg.get("General", "ServerName", fallback="My Plex Server")
-    return render_template("join.html",
-                           title=f"Join | {SERVER_NAME}",
-                           token=token,
-                           discord_enabled=discord_enabled,
-                           discord_invite=discord_invite)
+
+    # GET Request → Show Join Form
+    return render_template(
+        "join.html",
+        title=f"Join | {SERVER_NAME}",
+        token=token,
+        discord_enabled=discord_enabled,
+        discord_invite=discord_invite
+    )
+
 
 # ─────────────────────────────
 # Public Referral Portal
@@ -2049,65 +2095,150 @@ def api_member_extend_trial(discord_id):
 @webui.route("/api/member/<discord_id>/set_status", methods=["POST"])
 def api_member_set_status(discord_id):
     """
-    Update a member's status (one of the 4 Discord roles from config)
-    and sync with Discord if enabled.
+    Update a member's status (Initial / Trial / Payer / Lifetime),
+    run state transition logic, and sync with Discord if enabled.
     """
-    from database import update_member_status
-    import configparser, os
+    import configparser, os, sqlite3
+    from datetime import datetime, timedelta, timezone
+    from database import (
+        update_member_status,
+        start_trial,
+        get_member,
+        DB_PATH
+    )
+    from plexhelper import PlexHelper
 
     data = request.get_json(silent=True) or {}
     new_status = data.get("status", "").strip()
     if not new_status:
         return jsonify({"ok": False, "error": "No status provided."}), 400
 
-    # Save the status in DB exactly as chosen in UI
+    # ---------------------------------------------
+    # Load config + role names
+    # ---------------------------------------------
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+
+    INITIAL_ROLE  = cfg.get("Discord", "InitialRole",  fallback="Initial").strip()
+    TRIAL_ROLE    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
+    PAYER_ROLE    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
+    LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Lifetime").strip()
+
+    # ---------------------------------------------
+    # Get OLD status before changing
+    # ---------------------------------------------
+    m = get_member(discord_id) or {}
+    old_status = (m.get("status") or "").lower()
+    new_s      = new_status.lower()
+
+    logger.info(f"🔄 Status change: {discord_id}: {old_status} → {new_s}")
+
+    # ---------------------------------------------
+    # Write new status to DB
+    # ---------------------------------------------
     try:
         update_member_status(discord_id, new_status)
-        logger.info(f"✅ Updated DB status for {discord_id}: {new_status}")
     except Exception as e:
         logger.exception("❌ Failed to update DB status")
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    # Load role names from config.ini
-    cfg = configparser.ConfigParser()
-    cfg.read(os.path.join("config", "config.ini"), encoding="utf-8")
+    # ---------------------------------------------
+    # Helper to run SQL
+    # ---------------------------------------------
+    def db_exec(sql, params=()):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(sql, params)
+        conn.commit()
+        conn.close()
 
-    discord_enabled = cfg.getboolean("Discord", "Enabled", fallback=False)
+    # ---------------------------------------------
+    # STATE MACHINE — Your rules implemented
+    # ---------------------------------------------
 
-    INITIAL_ROLE  = cfg.get("Discord", "InitialRole",  fallback="No Access").strip()
-    TRIAL_ROLE    = cfg.get("Discord", "TrialRole",    fallback="Trial").strip()
-    PAYER_ROLE    = cfg.get("Discord", "PayerRole",    fallback="Payer").strip()
-    LIFETIME_ROLE = cfg.get("Discord", "LifetimeRole", fallback="Patreon").strip()
+    # 1️⃣ Initial → Trial
+    if old_status == INITIAL_ROLE.lower() and new_s == TRIAL_ROLE.lower():
+        days = cfg.getint("Trial", "DurationDays", fallback=7)
+        start_trial(discord_id, days)
+        logger.info(f"⏳ Initial → Trial: {days}-day trial started")
 
-    if not discord_enabled:
-        return jsonify({"ok": True, "message": f"Status updated (Discord disabled)."}), 200
+    # 2️⃣ Trial → Payer
+    elif old_status == TRIAL_ROLE.lower() and new_s == PAYER_ROLE.lower():
+        db_exec("""
+            UPDATE members
+            SET trial_start=NULL, trial_end=NULL, had_trial=1
+            WHERE discord_id=?
+        """, (discord_id,))
+        logger.info("💰 Trial → Payer: Trial cleared")
 
-    # Normalise the chosen status to one of the 4 config roles
-    ns_lower = new_status.lower()
-    status_map = {
-        INITIAL_ROLE.lower():  INITIAL_ROLE,
-        TRIAL_ROLE.lower():    TRIAL_ROLE,
-        PAYER_ROLE.lower():    PAYER_ROLE,
-        LIFETIME_ROLE.lower(): LIFETIME_ROLE,
-        # Optional aliases:
-        "expired":             INITIAL_ROLE,
-    }
+    # 3️⃣ Payer → Lifetime
+    elif old_status == PAYER_ROLE.lower() and new_s == LIFETIME_ROLE.lower():
+        db_exec("""
+            UPDATE members
+            SET trial_start=NULL, trial_end=NULL, paid_until=NULL
+            WHERE discord_id=?
+        """, (discord_id,))
+        logger.info("👑 Payer → Lifetime: All billing timers cleared")
 
-    target_role = status_map.get(ns_lower)
-    if not target_role:
-        # Unknown status → safest fallback is Initial
-        target_role = INITIAL_ROLE
-        logger.warning(f"⚠️ Unknown status '{new_status}', defaulting to {INITIAL_ROLE}.")
+    # 4️⃣ Lifetime → Payer (ONLY this transition grants 30 days)
+    elif old_status == LIFETIME_ROLE.lower() and new_s == PAYER_ROLE.lower():
+        paid_until = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        db_exec("""
+            UPDATE members
+            SET paid_until=?, trial_start=NULL, trial_end=NULL
+            WHERE discord_id=?
+        """, (paid_until, discord_id))
+        logger.info(f"💳 Lifetime → Payer: Granted 30 days until {paid_until}")
 
-    # Discord Sync via adapter (config-driven)
-    try:
-        from bot.discord_adapter import apply_role
-        apply_role(int(discord_id), target_role)
-        logger.info(f"🪄 Applied Discord role {target_role} to {discord_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Discord sync failed for {discord_id}: {e}")
+    # 5️⃣ Lifetime → Trial
+    elif old_status == LIFETIME_ROLE.lower() and new_s == TRIAL_ROLE.lower():
+        days = cfg.getint("Trial", "DurationDays", fallback=7)
+        db_exec("UPDATE members SET paid_until=NULL WHERE discord_id=?", (discord_id,))
+        start_trial(discord_id, days)
+        logger.info(f"🔁 Lifetime → Trial: Started new {days}-day trial")
+
+    # 6️⃣ Lifetime → Initial (remove access)
+    elif old_status == LIFETIME_ROLE.lower() and new_s == INITIAL_ROLE.lower():
+        db_exec("""
+            UPDATE members
+            SET trial_start=NULL, trial_end=NULL, paid_until=NULL
+            WHERE discord_id=?
+        """, (discord_id,))
+        logger.info("⛔ Lifetime → Initial: Timers cleared, removing access")
+
+        if cfg.getboolean("Plex", "Enabled", fallback=True):
+            try:
+                plex = PlexHelper(cfg)
+                if m.get("email"):
+                    plex.remove_user(m["email"])
+                    logger.info(f"🧹 Plex access removed for {discord_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Plex removal failed: {e}")
+
+    else:
+        logger.info("ℹ️ No special transition logic applied")
+
+    # ---------------------------------------------
+    # DISCORD SYNC (if enabled)
+    # ---------------------------------------------
+    if cfg.getboolean("Discord", "Enabled", fallback=False):
+        try:
+            from bot.discord_adapter import apply_role
+            status_map = {
+                INITIAL_ROLE.lower():  INITIAL_ROLE,
+                TRIAL_ROLE.lower():    TRIAL_ROLE,
+                PAYER_ROLE.lower():    PAYER_ROLE,
+                LIFETIME_ROLE.lower(): LIFETIME_ROLE,
+                "expired": INITIAL_ROLE,
+            }
+            target_role = status_map.get(new_s, INITIAL_ROLE)
+            apply_role(int(discord_id), target_role)
+            logger.info(f"🪄 Applied Discord role {target_role}")
+        except Exception as e:
+            logger.warning(f"⚠️ Discord sync failed: {e}")
 
     return jsonify({"ok": True, "message": f"Status updated to {new_status}"}), 200
+
 
 
 @webui.route("/api/roles", methods=["GET"])
@@ -2124,9 +2255,11 @@ def api_roles():
     ]
     return jsonify({"ok": True, "roles": roles})
 
+
 @webui.route("/pay/<discord_id>")
 def pay_page(discord_id):
     return render_template("payment.html", discord_id=discord_id)
+
 
 @webui.route("/update", methods=["GET", "POST"])
 def update_details():

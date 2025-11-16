@@ -346,10 +346,12 @@ async function sendDM(){
 
   // Insert PayLink
   if (includePayLink) {
-      const resp = await fetch("/api/site_domain")
+      const resp = await fetch("/api/site_domain");
       const json = await resp.json();
       const domain = json.domain;
-      body += "\n\n💳 Pay here:\n" + domain + "/pay";
+
+      // dmTarget = the discord_id of the selected member
+      body += "\n\n💳 Pay here:\n" + domain + "/pay/" + dmTarget;
   }
 
   // Insert Update Details link
