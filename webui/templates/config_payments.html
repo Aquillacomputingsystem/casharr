@@ -121,7 +121,8 @@
       </div>
     </div>
 
-      <!-- ────── COINBASE ────── -->
+    
+    <!-- ────── COINBASE ────── -->
   <div class="config-section">
     <h3>₿ Coinbase Commerce</h3>
 
@@ -129,8 +130,8 @@
       <label>
         <span>Enable Coinbase</span>
         <select name="CoinbaseEnabled">
-          <option value="true"  {% if config.get('coinbase_enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
-          <option value="false" {% if config.get('coinbase_enabled','').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
+          <option value="true"  {% if config.get('enabled','').lower() in ['1','true','yes'] %}selected{% endif %}>Enabled</option>
+          <option value="false" {% if config.get('enabled','').lower() in ['0','false','no'] %}selected{% endif %}>Disabled</option>
         </select>
       </label>
     </div>
@@ -149,6 +150,7 @@
       <code>https://commerce.coinbase.com/dashboard/settings</code>
     </p>
   </div>
+
     <!-- ────── ACTIONS ────── -->
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">💾 Save Changes</button>

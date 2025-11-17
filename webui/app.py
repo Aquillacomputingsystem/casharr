@@ -570,7 +570,7 @@ def config_payments():
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH, encoding="utf-8")
 
-    for sec in ["Pricing", "Promo", "PayPal", "Site", "Referral"]:
+    for sec in ["Pricing", "Promo", "PayPal", "Site", "Referral", "Coinbase"]:
         if sec not in cfg: cfg[sec] = {}
 
     if request.method == "POST":
@@ -615,7 +615,7 @@ def config_payments():
             return f"<pre>⚠️ Error saving config: {type(e).__name__}: {e}</pre>", 500
 
     merged = {}
-    for sec in ["Pricing", "Promo", "PayPal", "Referral", "Site"]:
+    for sec in ["Pricing", "Promo", "PayPal", "Referral", "Site", "Coinbase"]:
         for k, v in cfg[sec].items():
             merged[k.lower()] = v
     return render_template("config_payments.html", title="Config | Payments", config=merged)
