@@ -108,7 +108,7 @@ def daily_backup():
     backup_database_daily()
 
 def send_expiry_reminders():
-    """Notify members whose trial or payment expires soon."""
+    """Notify members whose trial or payment expires soon (calendar-day based)."""
     import configparser, sqlite3
 
     cfg = configparser.ConfigParser()
@@ -116,53 +116,66 @@ def send_expiry_reminders():
     if not cfg.getboolean("Reminders", "Enabled", fallback=False):
         return
 
-    days_before = int(cfg.get("Reminders", "DaysBeforeExpiry", fallback="3"))
+    days_before = int(cfg.get("Reminders", "DaysBeforeExpiry", fallback="1"))
     notify_email = cfg.getboolean("Reminders", "NotifyEmail", fallback=False)
     notify_sms = cfg.getboolean("Reminders", "NotifySMS", fallback=False)
     notify_discord = cfg.getboolean("Reminders", "NotifyDiscord", fallback=False)
 
     now = datetime.now(timezone.utc)
-    soon = now + timedelta(days=days_before)
+    today = now.date()
 
+    # Calculate the calendar date the reminder should be sent on
+    # Example: expiry_date = 2025-11-20, days_before=1 → reminder_date = 2025-11-19
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT discord_id, email, mobile, trial_end, paid_until FROM members")
     members = c.fetchall()
     conn.close()
 
-    for m in members:
-        discord_id, email, mobile, trial_end, paid_until = m
-        # detect upcoming expiry
+    for discord_id, email, mobile, trial_end, paid_until in members:
         expires_on = None
+
+        # ----- Trial expiry -----
         if trial_end:
             try:
                 dt = datetime.fromisoformat(trial_end)
-                if now < dt < soon:
+                expiry_date = dt.date()
+                reminder_date = expiry_date - timedelta(days=days_before)
+
+                # Send ONLY on the reminder calendar day, not “within next 24h”
+                if today == reminder_date and dt > now:
                     expires_on = dt
             except Exception:
                 pass
+
+        # ----- Paid expiry -----
         if not expires_on and paid_until:
             try:
                 dt = datetime.fromisoformat(paid_until)
-                if now < dt < soon:
+                expiry_date = dt.date()
+                reminder_date = expiry_date - timedelta(days=days_before)
+
+                if today == reminder_date and dt > now:
                     expires_on = dt
             except Exception:
                 pass
+
         if not expires_on:
             continue
 
-        # send reminders via available channels
+        # ----- Send notifications -----
         subject = "⏰ Casharr Access Expiring Soon"
         body = f"Your access will expire on {expires_on.date()}.\n\nTo keep access, renew your plan."
+
         if notify_email and email:
             send_email(subject, body, to=email)
         if notify_sms and mobile:
             send_sms(mobile, f"Casharr reminder: expires {expires_on.date()}")
-        from bot.discord_adapter import dm
         if notify_discord and discord_id:
+            from bot.discord_adapter import dm
             dm(discord_id, f"Your Casharr access will expire on {expires_on.date()}. Please renew soon!")
-        logger.info(f"🔔 Reminder sent to {email or mobile} for expiry on {expires_on.date()}")
 
+        logger.info(f"🔔 Calendar-based reminder sent to {email or mobile} for expiry {expires_on.date()}")
 
 
 # Instantiate scheduler on import
