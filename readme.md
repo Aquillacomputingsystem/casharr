@@ -58,7 +58,7 @@ System     — Logs / Tasks / Backups / Updates / Events
 
 ---
 
-## 🧠 How It Works
+## 🧠 How It Works -
 
 ### 1️⃣ Join & Onboarding
 When a new member joins the Discord server:
